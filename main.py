@@ -12,14 +12,14 @@ BASE_DIR = Path(__file__).resolve().parent
 app = FastAPI()
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-DB_PATH = "lealtad.db"
+DB_PATH = str(BASE_DIR / "lealtad.db")
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
-# Inicialización de tablas
+# Inicialización de tablas en la base de datos
 with get_db() as conn:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS clientes (
@@ -53,30 +53,35 @@ class SolicitudTransaccion(BaseModel):
 
 HUELLITAS_CANJE = 10
 
-# Vistas Web
+# Vistas Web (Sintaxis moderna compatible con FastAPI 0.110+)
 @app.get("/", response_class=HTMLResponse)
 @app.get("/registro", response_class=HTMLResponse)
 def vista_registro(request: Request):
-    return templates.TemplateResponse("registro.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="registro.html", context={})
 
 @app.get("/tarjeta/{cliente_id}", response_class=HTMLResponse)
 def vista_tarjeta(request: Request, cliente_id: int):
     conn = get_db()
     cliente = conn.execute("SELECT * FROM clientes WHERE id = ?", (cliente_id,)).fetchone()
     if not cliente:
+        conn.close()
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     historial = conn.execute(
         "SELECT * FROM transacciones WHERE cliente_id = ? ORDER BY fecha DESC LIMIT 5",
         (cliente_id,)
     ).fetchall()
     conn.close()
-    return templates.TemplateResponse("cliente.html", {"request": request, "cliente": cliente, "historial": historial})
+    return templates.TemplateResponse(
+        request=request, 
+        name="cliente.html", 
+        context={"cliente": cliente, "historial": historial}
+    )
 
 @app.get("/caja", response_class=HTMLResponse)
 def vista_caja(request: Request):
-    return templates.TemplateResponse("barista.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="barista.html", context={})
 
-# APIs
+# Endpoints de API
 @app.post("/api/clientes/registro")
 def registrar_cliente(datos: ClienteAlta):
     conn = get_db()
@@ -90,7 +95,6 @@ def registrar_cliente(datos: ClienteAlta):
         conn.commit()
         return {"cliente_id": cliente_id}
     except sqlite3.IntegrityError:
-        conn.close()
         raise HTTPException(status_code=400, detail="Este correo ya se encuentra registrado.")
     finally:
         conn.close()
