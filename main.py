@@ -99,14 +99,39 @@ def registrar_cliente(datos: ClienteAlta):
     finally:
         conn.close()
 
-@app.get("/api/cliente/{cliente_id}")
-def obtener_cliente(cliente_id: int):
+@app.get("/tarjeta/{cliente_id}", response_class=HTMLResponse)
+def vista_tarjeta(request: Request, cliente_id: int):
     conn = get_db()
-    cliente = conn.execute("SELECT id, nombre, huellitas_saldo FROM clientes WHERE id = ?", (cliente_id,)).fetchone()
-    conn.close()
+    cliente = conn.execute("SELECT * FROM clientes WHERE id = ?", (cliente_id,)).fetchone()
     if not cliente:
+        conn.close()
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
-    return dict(cliente)
+    
+    historial = conn.execute(
+        "SELECT * FROM transacciones WHERE cliente_id = ? ORDER BY fecha DESC LIMIT 5",
+        (cliente_id,)
+    ).fetchall()
+    conn.close()
+
+    cliente_dict = dict(cliente)
+    historial_list = [dict(row) for row in historial]
+    
+    saldo = cliente_dict.get("huellitas_saldo", 0)
+    progreso = saldo % 10
+    porcentaje = min(progreso * 10, 100)
+    faltantes = 10 - progreso
+
+    return templates.TemplateResponse(
+        request=request, 
+        name="cliente.html", 
+        context={
+            "cliente": cliente_dict, 
+            "historial": historial_list,
+            "porcentaje": porcentaje,
+            "faltantes": faltantes
+        }
+    )
+
 
 @app.post("/api/transaccion")
 def procesar_transaccion(datos: SolicitudTransaccion):
