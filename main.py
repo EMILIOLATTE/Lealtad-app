@@ -4,10 +4,13 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from typing import Optional
 from datetime import date
+from pathlib import Path
 import sqlite3
 
+BASE_DIR = Path(__file__).resolve().parent
+
 app = FastAPI()
-templates = Jinja2Templates(directory="templates")
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 DB_PATH = "lealtad.db"
 
