@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Registro | Programa Huellitas</title>
+    <style>
+        body { font-family: -apple-system, sans-serif; background-color: #f7f4ef; color: #333; margin: 0; padding: 20px 16px; display: flex; justify-content: center; align-items: center; min-height: 100vh; box-sizing: border-box; }
+        .form-card { background: #fff; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); width: 100%; max-width: 360px; padding: 28px 24px; box-sizing: border-box; }
+        h1 { font-size: 1.4rem; color: #4a3427; margin: 0 0 8px 0; text-align: center; }
+        p.sub { font-size: 0.85rem; color: #6b5b50; margin: 0 0 20px 0; text-align: center; }
+        label { display: block; font-size: 0.8rem; font-weight: bold; color: #4a3427; margin: 12px 0 4px; }
+        input { width: 100%; padding: 12px; border: 1px solid #d4c5b9; border-radius: 10px; font-size: 0.95rem; box-sizing: border-box; background: #faf8f5; }
+        button { width: 100%; padding: 14px; background-color: #bc6c25; color: white; border: none; border-radius: 12px; font-size: 1rem; font-weight: bold; cursor: pointer; margin-top: 18px; }
+        .error { display: none; color: #e76f51; font-size: 0.85rem; margin-top: 10px; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="form-card">
+        <h1>¡Bienvenido! 🐾</h1>
+        <p class="sub">Acumula 1 huellita por cada bebida o pan. Al llegar a 10, obtén un producto gratis.</p>
+        <div id="error" class="error"></div>
+        <form id="regForm">
+            <label>Nombre y Apellido</label>
+            <input type="text" id="nombre" required placeholder="Tu nombre">
+            <label>Correo Electrónico</label>
+            <input type="email" id="correo" required placeholder="tu@correo.com">
+            <label>Cumpleaños (opcional)</label>
+            <input type="date" id="fecha_nac">
+            <button type="submit">Obtener mi Tarjeta Digital</button>
+        </form>
+    </div>
+    <script>
+        document.getElementById('regForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const err = document.getElementById('error');
+            err.style.display = 'none';
+            const res = await fetch('/api/clientes/registro', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    nombre: document.getElementById('nombre').value.trim(),
+                    correo: document.getElementById('correo').value.trim(),
+                    fecha_nacimiento: document.getElementById('fecha_nac').value || null
+                })
+            });
+            const data = await res.json();
+            if (res.ok) {
+                window.location.href = `/tarjeta/${data.cliente_id}`;
+            } else {
+                err.innerText = data.detail || "Error en el registro";
+                err.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>
