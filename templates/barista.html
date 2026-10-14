@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Caja | Escáner Huellitas</title>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        body { font-family: -apple-system, sans-serif; background: #ece8e1; margin: 0; padding: 16px; display: flex; justify-content: center; }
+        .box { width: 100%; max-width: 400px; background: #fff; border-radius: 16px; padding: 20px; box-sizing: border-box; }
+        h2 { margin-top: 0; color: #4a3427; font-size: 1.2rem; text-align: center; }
+        #reader { width: 100%; border-radius: 12px; overflow: hidden; }
+        .panel { display: none; margin-top: 16px; padding: 16px; background: #fdf8f0; border-radius: 12px; border: 1px solid #d4a373; text-align: center; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+        button { padding: 12px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
+        .btn-add { background: #2a9d8f; color: #fff; }
+        .btn-canje { background: #e76f51; color: #fff; }
+        .btn-next { background: #6c757d; color: #fff; width: 100%; margin-top: 12px; }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h2>Escáner de Barra 🐾</h2>
+        <div id="reader"></div>
+        <div id="panel" class="panel">
+            <h3 id="c-nombre" style="margin: 0; color: #4a3427;"></h3>
+            <p style="margin: 4px 0 12px;">Saldo: <strong id="c-saldo" style="font-size: 1.4rem; color: #bc6c25;"></strong> / 10</p>
+            <div style="font-size: 0.8rem; font-weight: bold; color: #666;">SUMAR HUELLITA (+1):</div>
+            <div class="grid">
+                <button class="btn-add" onclick="enviar('BEBIDA')">☕ Bebida</button>
+                <button class="btn-add" onclick="enviar('PAN')">🥐 Pan</button>
+            </div>
+            <div style="font-size: 0.8rem; font-weight: bold; color: #666; margin-top: 12px;">CANJEAR (10 PTS):</div>
+            <div class="grid">
+                <button class="btn-canje" onclick="enviar('CANJE_BEBIDA')">🎁 Bebida</button>
+                <button class="btn-canje" onclick="enviar('CANJE_PAN')">🎁 Pan</button>
+            </div>
+            <button class="btn-next" onclick="reiniciar()">Siguiente Cliente</button>
+        </div>
+    </div>
+    <script>
+        let clienteIdActual = null;
+        const qr = new Html5Qrcode("reader");
+
+        function iniciar() {
+            document.getElementById('reader').style.display = 'block';
+            document.getElementById('panel').style.display = 'none';
+            qr.start({ facingMode: "environment" }, { fps: 10, qrbox: 220 }, (id) => {
+                qr.stop();
+                document.getElementById('reader').style.display = 'none';
+                clienteIdActual = id;
+                cargar(id);
+            }).catch(e => console.error(e));
+        }
+
+        async function cargar(id) {
+            const res = await fetch(`/api/cliente/${id}`);
+            if (res.ok) {
+                const data = await res.json();
+                document.getElementById('c-nombre').innerText = data.nombre;
+                document.getElementById('c-saldo').innerText = data.huellitas_saldo;
+                document.getElementById('panel').style.display = 'block';
+            } else {
+                alert("Cliente no encontrado");
+                iniciar();
+            }
+        }
+
+        async function enviar(accion) {
+            if (accion.startsWith('CANJE') && !confirm("¿Confirmar canje de 10 huellitas?")) return;
+            const res = await fetch('/api/transaccion', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ cliente_id: clienteIdActual, tipo_accion: accion })
+            });
+            const data = await res.json();
+            if (res.ok) {
+                alert(data.mensaje);
+                cargar(clienteIdActual);
+            } else {
+                alert(data.detail || "Error");
+            }
+        }
+
+        function reiniciar() { iniciar(); }
+        iniciar();
+    </script>
+</body>
+</html>
