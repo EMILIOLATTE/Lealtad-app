@@ -3,35 +3,93 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mi Tarjeta Digital</title>
+    <title>Mi Tarjeta Digital | Latte&Go</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <style>
-        body { font-family: -apple-system, sans-serif; background-color: #f7f4ef; color: #333; margin: 0; padding: 16px; display: flex; justify-content: center; }
-        .card { background: #fff; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); width: 100%; max-width: 360px; padding: 24px; text-align: center; }
-        .header h1 { font-size: 1.3rem; margin: 0; color: #4a3427; }
-        .saldo-box { background: #fdf8f0; border: 2px dashed #d4a373; border-radius: 16px; padding: 16px; margin: 16px 0; }
-        .puntos { font-size: 3rem; font-weight: 800; color: #bc6c25; line-height: 1; }
-        .barra-bg { background: #e9ecef; border-radius: 10px; height: 12px; margin-top: 12px; overflow: hidden; }
-        .barra-fill { background: #bc6c25; height: 100%; width: {{ [ (cliente.huellitas_saldo % 10) * 10, 100 ] | min }}%; }
-        #qrcode { display: flex; justify-content: center; margin: 18px 0 6px; }
-        .hist { text-align: left; margin-top: 20px; font-size: 0.85rem; }
-        .hist-item { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #eee; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #f7f4ef;
+            color: #333;
+            margin: 0;
+            padding: 20px 16px;
+            display: flex;
+            justify-content: center;
+            box-sizing: border-box;
+        }
+        .card {
+            background: #ffffff;
+            border-radius: 20px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+            width: 100%;
+            max-width: 360px;
+            padding: 24px;
+            text-align: center;
+            box-sizing: border-box;
+        }
+        .header h1 {
+            font-size: 1.3rem;
+            margin: 0;
+            color: #4a3427;
+        }
+        .saldo-box {
+            background: #fdf8f0;
+            border: 2px dashed #d4a373;
+            border-radius: 16px;
+            padding: 16px;
+            margin: 16px 0;
+        }
+        .puntos {
+            font-size: 3rem;
+            font-weight: 800;
+            color: #bc6c25;
+            line-height: 1;
+        }
+        .barra-bg {
+            background: #e9ecef;
+            border-radius: 10px;
+            height: 12px;
+            margin-top: 12px;
+            overflow: hidden;
+        }
+        .barra-fill {
+            background: #bc6c25;
+            height: 100%;
+            width: {{ porcentaje }}%;
+        }
+        #qrcode {
+            display: flex;
+            justify-content: center;
+            margin: 18px 0 10px;
+        }
+        .hist {
+            text-align: left;
+            margin-top: 20px;
+            font-size: 0.85rem;
+        }
+        .hist-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            border-bottom: 1px solid #eee;
+        }
     </style>
 </head>
 <body>
     <div class="card">
         <div class="header">
-            <h1>¡Hola, {{ cliente.nombre }}!</h1>
+            <h1>¡Hola, {{ cliente.nombre }}! 🐾</h1>
             <p style="margin: 4px 0 0; font-size: 0.8rem; color: #777;">Muestra tu QR en barra al ordenar</p>
         </div>
         <div class="saldo-box">
             <div class="puntos">{{ cliente.huellitas_saldo }}</div>
-            <div style="font-size: 0.85rem; color: #6b5b50; margin-top: 4px;">Huellitas acumuladas 🐾</div>
-            <div class="barra-bg"><div class="barra-fill"></div></div>
+            <div style="font-size: 0.85rem; color: #6b5b50; margin-top: 4px;">Huellitas acumuladas</div>
+            <div class="barra-bg">
+                <div class="barra-fill"></div>
+            </div>
             {% if cliente.huellitas_saldo >= 10 %}
                 <p style="margin: 8px 0 0; font-size: 0.85rem; font-weight: bold; color: #2a9d8f;">¡Tienes recompensa disponible! 🎉</p>
             {% else %}
-                <p style="margin: 8px 0 0; font-size: 0.8rem; color: #777;">Te faltan {{ 10 - (cliente.huellitas_saldo % 10) }} para tu cortesía</p>
+                <p style="margin: 8px 0 0; font-size: 0.8rem; color: #777;">Te faltan {{ faltantes }} para tu cortesía</p>
             {% endif %}
         </div>
         <div id="qrcode"></div>
@@ -43,7 +101,7 @@
                     <span>{{ '+' if item.tipo == 'ACUMULACION' else '-' }}{{ item.cantidad }}</span>
                 </div>
             {% else %}
-                <p style="color: #999; font-size: 0.8rem;">Aún no tienes movimientos registrados.</p>
+                <p style="color: #999; font-size: 0.8rem; margin: 8px 0 0;">Aún no tienes movimientos registrados.</p>
             {% endfor %}
         </div>
     </div>
