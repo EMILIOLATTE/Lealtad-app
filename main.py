@@ -2,7 +2,6 @@ import os
 from pathlib import Path
 from datetime import date
 from typing import Optional
-import sqlite3
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -15,35 +14,80 @@ TEMPLATES_DIR = BASE_DIR / "templates"
 app = FastAPI()
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-DB_PATH = str(BASE_DIR / "lealtad.db")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+if DATABASE_URL:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
 
-# Inicialización de tablas
-with get_db() as conn:
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS clientes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nombre TEXT NOT NULL,
-            correo TEXT UNIQUE NOT NULL,
-            fecha_nacimiento DATE,
-            huellitas_saldo INTEGER DEFAULT 0
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS transacciones (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            cliente_id INTEGER NOT NULL,
-            tipo TEXT CHECK(tipo IN ('ACUMULACION', 'CANJE')),
-            cantidad INTEGER NOT NULL,
-            descripcion TEXT,
-            fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (cliente_id) REFERENCES clientes(id)
-        )
-    """)
+    # Neon y Render a veces entregan URLs con 'postgres://', corregimos a 'postgresql://'
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+    def get_db():
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        return conn
+
+    # Inicialización de tablas en PostgreSQL
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS clientes (
+                    id SERIAL PRIMARY KEY,
+                    nombre TEXT NOT NULL,
+                    correo TEXT UNIQUE NOT NULL,
+                    fecha_nacimiento DATE,
+                    huellitas_saldo INTEGER DEFAULT 0
+                );
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transacciones (
+                    id SERIAL PRIMARY KEY,
+                    cliente_id INTEGER NOT NULL REFERENCES clientes(id),
+                    tipo TEXT CHECK(tipo IN ('ACUMULACION', 'CANJE')),
+                    cantidad INTEGER NOT NULL,
+                    descripcion TEXT,
+                    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+        conn.commit()
+
+    PARAM = "%s"
+
+else:
+    import sqlite3
+
+    DB_PATH = str(BASE_DIR / "lealtad.db")
+
+    def get_db():
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS clientes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT NOT NULL,
+                correo TEXT UNIQUE NOT NULL,
+                fecha_nacimiento DATE,
+                huellitas_saldo INTEGER DEFAULT 0
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS transacciones (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cliente_id INTEGER NOT NULL,
+                tipo TEXT CHECK(tipo IN ('ACUMULACION', 'CANJE')),
+                cantidad INTEGER NOT NULL,
+                descripcion TEXT,
+                fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (cliente_id) REFERENCES clientes(id)
+            )
+        """)
+
+    PARAM = "?"
+
 
 class ClienteAlta(BaseModel):
     nombre: str
@@ -66,15 +110,19 @@ def vista_registro(request: Request):
 @app.get("/tarjeta/{cliente_id}", response_class=HTMLResponse)
 def vista_tarjeta(request: Request, cliente_id: int):
     conn = get_db()
-    cliente = conn.execute("SELECT * FROM clientes WHERE id = ?", (cliente_id,)).fetchone()
+    cur = conn.cursor()
+    cur.execute(f"SELECT * FROM clientes WHERE id = {PARAM}", (cliente_id,))
+    cliente = cur.fetchone()
+    
     if not cliente:
         conn.close()
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     
-    historial = conn.execute(
-        "SELECT * FROM transacciones WHERE cliente_id = ? ORDER BY fecha DESC LIMIT 5",
+    cur.execute(
+        f"SELECT * FROM transacciones WHERE cliente_id = {PARAM} ORDER BY fecha DESC LIMIT 5",
         (cliente_id,)
-    ).fetchall()
+    )
+    historial = cur.fetchall()
     conn.close()
 
     cliente_dict = dict(cliente)
@@ -95,7 +143,7 @@ def vista_tarjeta(request: Request, cliente_id: int):
     if not historial:
         historial_html = '<p style="color:#999; font-size:0.8rem; margin:8px 0 0;">Aún no tienes movimientos registrados.</p>'
 
-    aviso_meta = f'<p style="margin:8px 0 0; font-size:0.85rem; font-weight:bold; color:#2a9d8f;">¡Tienes recompensa disponible! 🎉</p>' if saldo >= 10 else f'<p style="margin:8px 0 0; font-size:0.8rem; color:#777;">Te faltan {faltantes} para tu cortesía</p>'
+    aviso_meta = '<p style="margin:8px 0 0; font-size:0.85rem; font-weight:bold; color:#2a9d8f;">¡Tienes recompensa disponible! 🎉</p>' if saldo >= 10 else f'<p style="margin:8px 0 0; font-size:0.8rem; color:#777;">Te faltan {faltantes} para tu cortesía</p>'
 
     html_content = f"""
     <!DOCTYPE html>
@@ -155,26 +203,44 @@ def vista_caja(request: Request):
 @app.post("/api/clientes/registro")
 def registrar_cliente(datos: ClienteAlta):
     conn = get_db()
-    cursor = conn.cursor()
+    cur = conn.cursor()
     try:
         fecha_val = str(datos.fecha_nacimiento) if datos.fecha_nacimiento else None
-        cursor.execute(
-            "INSERT INTO clientes (nombre, correo, fecha_nacimiento, huellitas_saldo) VALUES (?, ?, ?, 0)",
-            (datos.nombre.strip(), datos.correo.lower().strip(), fecha_val)
-        )
-        cliente_id = cursor.lastrowid
+        if DATABASE_URL:
+            cur.execute(
+                """
+                INSERT INTO clientes (nombre, correo, fecha_nacimiento, huellitas_saldo) 
+                VALUES (%s, %s, %s, 0) RETURNING id
+                """,
+                (datos.nombre.strip(), datos.correo.lower().strip(), fecha_val)
+            )
+            fila = cur.fetchone()
+            cliente_id = fila["id"]
+        else:
+            cur.execute(
+                """
+                INSERT INTO clientes (nombre, correo, fecha_nacimiento, huellitas_saldo) 
+                VALUES (?, ?, ?, 0)
+                """,
+                (datos.nombre.strip(), datos.correo.lower().strip(), fecha_val)
+            )
+            cliente_id = cur.lastrowid
         conn.commit()
         return {"cliente_id": cliente_id}
-    except sqlite3.IntegrityError:
+    except Exception as e:
         conn.rollback()
-        raise HTTPException(status_code=400, detail="Este correo ya se encuentra registrado.")
+        if "unique" in str(e).lower() or "unique constraint" in str(e).lower():
+            raise HTTPException(status_code=400, detail="Este correo ya se encuentra registrado.")
+        raise HTTPException(status_code=500, detail=f"Error en base de datos: {str(e)}")
     finally:
         conn.close()
 
 @app.get("/api/cliente/{cliente_id}")
 def obtener_cliente(cliente_id: int):
     conn = get_db()
-    cliente = conn.execute("SELECT id, nombre, huellitas_saldo FROM clientes WHERE id = ?", (cliente_id,)).fetchone()
+    cur = conn.cursor()
+    cur.execute(f"SELECT id, nombre, huellitas_saldo FROM clientes WHERE id = {PARAM}", (cliente_id,))
+    cliente = cur.fetchone()
     conn.close()
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
@@ -183,8 +249,9 @@ def obtener_cliente(cliente_id: int):
 @app.post("/api/transaccion")
 def procesar_transaccion(datos: SolicitudTransaccion):
     conn = get_db()
-    cursor = conn.cursor()
-    cliente = cursor.execute("SELECT huellitas_saldo FROM clientes WHERE id = ?", (datos.cliente_id,)).fetchone()
+    cur = conn.cursor()
+    cur.execute(f"SELECT huellitas_saldo FROM clientes WHERE id = {PARAM}", (datos.cliente_id,))
+    cliente = cur.fetchone()
 
     if not cliente:
         conn.close()
@@ -194,8 +261,11 @@ def procesar_transaccion(datos: SolicitudTransaccion):
 
     if datos.tipo_accion in ["BEBIDA", "PAN"]:
         desc = "Compra de bebida" if datos.tipo_accion == "BEBIDA" else "Compra de pan"
-        cursor.execute("UPDATE clientes SET huellitas_saldo = huellitas_saldo + 1 WHERE id = ?", (datos.cliente_id,))
-        cursor.execute("INSERT INTO transacciones (cliente_id, tipo, cantidad, descripcion) VALUES (?, 'ACUMULACION', 1, ?)", (datos.cliente_id, desc))
+        cur.execute(f"UPDATE clientes SET huellitas_saldo = huellitas_saldo + 1 WHERE id = {PARAM}", (datos.cliente_id,))
+        cur.execute(
+            f"INSERT INTO transacciones (cliente_id, tipo, cantidad, descripcion) VALUES ({PARAM}, 'ACUMULACION', 1, {PARAM})",
+            (datos.cliente_id, desc)
+        )
         conn.commit()
         conn.close()
         return {"mensaje": "¡Huellita registrada!", "nuevo_saldo": saldo + 1}
@@ -205,8 +275,11 @@ def procesar_transaccion(datos: SolicitudTransaccion):
             conn.close()
             raise HTTPException(status_code=400, detail=f"Saldo insuficiente. Tiene {saldo} de 10 huellitas.")
         desc = "Canje: Bebida de cortesía" if datos.tipo_accion == "CANJE_BEBIDA" else "Canje: Pan de cortesía"
-        cursor.execute("UPDATE clientes SET huellitas_saldo = huellitas_saldo - ? WHERE id = ?", (HUELLITAS_CANJE, datos.cliente_id))
-        cursor.execute("INSERT INTO transacciones (cliente_id, tipo, cantidad, descripcion) VALUES (?, 'CANJE', ?, ?)", (datos.cliente_id, HUELLITAS_CANJE, desc))
+        cur.execute(f"UPDATE clientes SET huellitas_saldo = huellitas_saldo - {PARAM} WHERE id = {PARAM}", (HUELLITAS_CANJE, datos.cliente_id))
+        cur.execute(
+            f"INSERT INTO transacciones (cliente_id, tipo, cantidad, descripcion) VALUES ({PARAM}, 'CANJE', {PARAM}, {PARAM})",
+            (datos.cliente_id, HUELLITAS_CANJE, desc)
+        )
         conn.commit()
         conn.close()
         return {"mensaje": "¡Canje exitoso!", "nuevo_saldo": saldo - HUELLITAS_CANJE}
