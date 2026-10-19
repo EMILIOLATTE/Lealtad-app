@@ -1,16 +1,24 @@
+import os
+from pathlib import Path
+from datetime import date
+from typing import Optional
+import sqlite3
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from typing import Optional
-from datetime import date
-from pathlib import Path
-import sqlite3
 
+# Resolución de rutas absolutas
 BASE_DIR = Path(__file__).resolve().parent
+TEMPLATES_DIR = BASE_DIR / "templates"
+
+print(f"DEBUG - Directorio base: {BASE_DIR}")
+print(f"DEBUG - Directorio templates: {TEMPLATES_DIR}")
+print(f"DEBUG - Archivos en templates: {list(TEMPLATES_DIR.glob('*')) if TEMPLATES_DIR.exists() else 'NO EXISTE'}")
 
 app = FastAPI()
-templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 DB_PATH = str(BASE_DIR / "lealtad.db")
 
@@ -18,6 +26,7 @@ def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
 
 # Inicialización de tablas en la base de datos
 with get_db() as conn:
