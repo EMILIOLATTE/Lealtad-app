@@ -9,13 +9,8 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-# Resolución de rutas absolutas
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
-
-print(f"DEBUG - Directorio base: {BASE_DIR}")
-print(f"DEBUG - Directorio templates: {TEMPLATES_DIR}")
-print(f"DEBUG - Archivos en templates: {list(TEMPLATES_DIR.glob('*')) if TEMPLATES_DIR.exists() else 'NO EXISTE'}")
 
 app = FastAPI()
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -27,8 +22,7 @@ def get_db():
     conn.row_factory = sqlite3.Row
     return conn
 
-
-# Inicialización de tablas en la base de datos
+# Inicialización de tablas
 with get_db() as conn:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS clientes (
@@ -62,7 +56,8 @@ class SolicitudTransaccion(BaseModel):
 
 HUELLITAS_CANJE = 10
 
-# Vistas Web (Sintaxis moderna compatible con FastAPI 0.110+)
+# ----------------- VISTAS WEB -----------------
+
 @app.get("/", response_class=HTMLResponse)
 @app.get("/registro", response_class=HTMLResponse)
 def vista_registro(request: Request):
@@ -151,62 +146,39 @@ def vista_tarjeta(request: Request, cliente_id: int):
     """
     return HTMLResponse(content=html_content)
 
-
 @app.get("/caja", response_class=HTMLResponse)
 def vista_caja(request: Request):
     return templates.TemplateResponse(request=request, name="barista.html", context={})
 
-# Endpoints de API
+# ----------------- ENDPOINTS DE API -----------------
+
 @app.post("/api/clientes/registro")
 def registrar_cliente(datos: ClienteAlta):
     conn = get_db()
     cursor = conn.cursor()
     try:
+        fecha_val = str(datos.fecha_nacimiento) if datos.fecha_nacimiento else None
         cursor.execute(
             "INSERT INTO clientes (nombre, correo, fecha_nacimiento, huellitas_saldo) VALUES (?, ?, ?, 0)",
-            (datos.nombre, datos.correo.lower().strip(), datos.fecha_nacimiento)
+            (datos.nombre.strip(), datos.correo.lower().strip(), fecha_val)
         )
         cliente_id = cursor.lastrowid
         conn.commit()
         return {"cliente_id": cliente_id}
     except sqlite3.IntegrityError:
+        conn.rollback()
         raise HTTPException(status_code=400, detail="Este correo ya se encuentra registrado.")
     finally:
         conn.close()
 
-@app.get("/tarjeta/{cliente_id}", response_class=HTMLResponse)
-def vista_tarjeta(request: Request, cliente_id: int):
+@app.get("/api/cliente/{cliente_id}")
+def obtener_cliente(cliente_id: int):
     conn = get_db()
-    cliente = conn.execute("SELECT * FROM clientes WHERE id = ?", (cliente_id,)).fetchone()
-    if not cliente:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Cliente no encontrado")
-    
-    historial = conn.execute(
-        "SELECT * FROM transacciones WHERE cliente_id = ? ORDER BY fecha DESC LIMIT 5",
-        (cliente_id,)
-    ).fetchall()
+    cliente = conn.execute("SELECT id, nombre, huellitas_saldo FROM clientes WHERE id = ?", (cliente_id,)).fetchone()
     conn.close()
-
-    cliente_dict = dict(cliente)
-    historial_list = [dict(row) for row in historial]
-    
-    saldo = cliente_dict.get("huellitas_saldo", 0)
-    progreso = saldo % 10
-    porcentaje = min(progreso * 10, 100)
-    faltantes = 10 - progreso
-
-    return templates.TemplateResponse(
-        request=request, 
-        name="cliente.html", 
-        context={
-            "cliente": cliente_dict, 
-            "historial": historial_list,
-            "porcentaje": porcentaje,
-            "faltantes": faltantes
-        }
-    )
-
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    return dict(cliente)
 
 @app.post("/api/transaccion")
 def procesar_transaccion(datos: SolicitudTransaccion):
