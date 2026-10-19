@@ -20,7 +20,6 @@ if DATABASE_URL:
     import psycopg2
     from psycopg2.extras import RealDictCursor
 
-    # Neon y Render a veces entregan URLs con 'postgres://', corregimos a 'postgresql://'
     if DATABASE_URL.startswith("postgres://"):
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
@@ -204,7 +203,17 @@ def vista_caja(request: Request):
 def registrar_cliente(datos: ClienteAlta):
     conn = get_db()
     cur = conn.cursor()
+    correo_limpio = datos.correo.lower().strip()
     try:
+        # 1. Comprobar si el cliente ya existe previamente
+        cur.execute(f"SELECT id FROM clientes WHERE correo = {PARAM}", (correo_limpio,))
+        existente = cur.fetchone()
+        if existente:
+            conn.close()
+            # Devuelve su ID existente para redirigirlo a su tarjeta sin error
+            return {"cliente_id": existente["id"], "mensaje": "¡Bienvenido de vuelta!"}
+
+        # 2. Si es cliente nuevo, registrarlo
         fecha_val = str(datos.fecha_nacimiento) if datos.fecha_nacimiento else None
         if DATABASE_URL:
             cur.execute(
@@ -212,7 +221,7 @@ def registrar_cliente(datos: ClienteAlta):
                 INSERT INTO clientes (nombre, correo, fecha_nacimiento, huellitas_saldo) 
                 VALUES (%s, %s, %s, 0) RETURNING id
                 """,
-                (datos.nombre.strip(), datos.correo.lower().strip(), fecha_val)
+                (datos.nombre.strip(), correo_limpio, fecha_val)
             )
             fila = cur.fetchone()
             cliente_id = fila["id"]
@@ -222,15 +231,13 @@ def registrar_cliente(datos: ClienteAlta):
                 INSERT INTO clientes (nombre, correo, fecha_nacimiento, huellitas_saldo) 
                 VALUES (?, ?, ?, 0)
                 """,
-                (datos.nombre.strip(), datos.correo.lower().strip(), fecha_val)
+                (datos.nombre.strip(), correo_limpio, fecha_val)
             )
             cliente_id = cur.lastrowid
         conn.commit()
-        return {"cliente_id": cliente_id}
+        return {"cliente_id": cliente_id, "mensaje": "¡Registro exitoso!"}
     except Exception as e:
         conn.rollback()
-        if "unique" in str(e).lower() or "unique constraint" in str(e).lower():
-            raise HTTPException(status_code=400, detail="Este correo ya se encuentra registrado.")
         raise HTTPException(status_code=500, detail=f"Error en base de datos: {str(e)}")
     finally:
         conn.close()
