@@ -3,87 +3,241 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Caja | Escáner Huellitas</title>
+    <title>Terminal Barista | Latte&Go</title>
+    <!-- Librería de escáner QR -->
     <script src="https://unpkg.com/html5-qrcode"></script>
     <style>
-        body { font-family: -apple-system, sans-serif; background: #ece8e1; margin: 0; padding: 16px; display: flex; justify-content: center; }
-        .box { width: 100%; max-width: 400px; background: #fff; border-radius: 16px; padding: 20px; box-sizing: border-box; }
-        h2 { margin-top: 0; color: #4a3427; font-size: 1.2rem; text-align: center; }
-        #reader { width: 100%; border-radius: 12px; overflow: hidden; }
-        .panel { display: none; margin-top: 16px; padding: 16px; background: #fdf8f0; border-radius: 12px; border: 1px solid #d4a373; text-align: center; }
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
-        button { padding: 12px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
-        .btn-add { background: #2a9d8f; color: #fff; }
-        .btn-canje { background: #e76f51; color: #fff; }
-        .btn-next { background: #6c757d; color: #fff; width: 100%; margin-top: 12px; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #2b1e16;
+            color: #f7f4ef;
+            margin: 0;
+            padding: 20px 16px;
+            display: flex;
+            justify-content: center;
+            box-sizing: border-box;
+        }
+        .container {
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+        h1 {
+            font-size: 1.4rem;
+            margin-bottom: 4px;
+            color: #d4a373;
+        }
+        #reader {
+            width: 100%;
+            background: #1a120d;
+            border-radius: 16px;
+            overflow: hidden;
+            margin: 16px 0;
+            border: 2px solid #4a3427;
+        }
+        .panel-cliente {
+            display: none;
+            background: #ffffff;
+            color: #333333;
+            border-radius: 20px;
+            padding: 24px;
+            margin-top: 16px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        .nombre-cliente {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #4a3427;
+            margin: 0;
+        }
+        .saldo-tag {
+            font-size: 2.2rem;
+            font-weight: 800;
+            color: #bc6c25;
+            margin: 10px 0;
+        }
+        .grid-botones {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 16px;
+        }
+        .btn {
+            border: none;
+            border-radius: 12px;
+            padding: 14px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+        .btn:active {
+            transform: scale(0.97);
+        }
+        .btn-acumular {
+            background-color: #bc6c25;
+            color: #fff;
+        }
+        .btn-canje {
+            background-color: #2a9d8f;
+            color: #fff;
+            grid-column: span 2;
+        }
+        .btn-reset {
+            background-color: #e9ecef;
+            color: #555;
+            margin-top: 14px;
+            width: 100%;
+        }
+        .aviso {
+            font-size: 0.85rem;
+            color: #bbb;
+            margin-top: 8px;
+        }
     </style>
 </head>
 <body>
-    <div class="box">
-        <h2>Escáner de Barra 🐾</h2>
+    <div class="container">
+        <h1>☕ Terminal Barista</h1>
+        <p class="aviso">Escanea el código QR de la tarjeta del cliente</p>
+
+        <!-- Lector de cámara -->
         <div id="reader"></div>
-        <div id="panel" class="panel">
-            <h3 id="c-nombre" style="margin: 0; color: #4a3427;"></h3>
-            <p style="margin: 4px 0 12px;">Saldo: <strong id="c-saldo" style="font-size: 1.4rem; color: #bc6c25;"></strong> / 10</p>
-            <div style="font-size: 0.8rem; font-weight: bold; color: #666;">SUMAR HUELLITA (+1):</div>
-            <div class="grid">
-                <button class="btn-add" onclick="enviar('BEBIDA')">☕ Bebida</button>
-                <button class="btn-add" onclick="enviar('PAN')">🥐 Pan</button>
+
+        <!-- Panel del Cliente -->
+        <div id="panel" class="panel-cliente">
+            <h2 id="cliente-nombre" class="nombre-cliente"></h2>
+            <div id="cliente-saldo" class="saldo-tag">0</div>
+            <p style="margin: 0 0 16px; font-size: 0.85rem; color: #777;">Huellitas acumuladas</p>
+
+            <div class="grid-botones">
+                <button class="btn btn-acumular" onclick="enviarAccion('BEBIDA')">☕ +1 Bebida</button>
+                <button class="btn btn-acumular" onclick="enviarAccion('PAN')">🥐 +1 Pan</button>
+                <button id="btn-canje" class="btn btn-canje" onclick="enviarAccion('CANJE_BEBIDA')">🎉 Canjear Cortesía (10 pts)</button>
             </div>
-            <div style="font-size: 0.8rem; font-weight: bold; color: #666; margin-top: 12px;">CANJEAR (10 PTS):</div>
-            <div class="grid">
-                <button class="btn-canje" onclick="enviar('CANJE_BEBIDA')">🎁 Bebida</button>
-                <button class="btn-canje" onclick="enviar('CANJE_PAN')">🎁 Pan</button>
-            </div>
-            <button class="btn-next" onclick="reiniciar()">Siguiente Cliente</button>
+
+            <button class="btn btn-reset" onclick="reiniciarEscaneo()">Escanear otro cliente</button>
         </div>
     </div>
+
     <script>
-        let clienteIdActual = null;
-        const qr = new Html5Qrcode("reader");
+        let html5QrCode = null;
+        let clienteActualId = null;
 
-        function iniciar() {
-            document.getElementById('reader').style.display = 'block';
-            document.getElementById('panel').style.display = 'none';
-            qr.start({ facingMode: "environment" }, { fps: 10, qrbox: 220 }, (id) => {
-                qr.stop();
-                document.getElementById('reader').style.display = 'none';
-                clienteIdActual = id;
-                cargar(id);
-            }).catch(e => console.error(e));
+        function extraerId(texto) {
+            let limpio = String(texto).trim();
+            // Si el QR contiene una URL completa (ej: .../tarjeta/1), toma el último segmento
+            if (limpio.includes("/")) {
+                const segmentos = limpio.split("/").filter(s => s.length > 0);
+                limpio = segmentos[segmentos.length - 1];
+            }
+            return parseInt(limpio, 10);
         }
 
-        async function cargar(id) {
-            const res = await fetch(`/api/cliente/${id}`);
-            if (res.ok) {
+        async function cargarClientePorId(id) {
+            try {
+                const res = await fetch(`/api/cliente/${id}`);
+                if (!res.ok) {
+                    const err = await res.json();
+                    alert(err.detail || "Cliente no encontrado");
+                    reiniciarEscaneo();
+                    return;
+                }
                 const data = await res.json();
-                document.getElementById('c-nombre').innerText = data.nombre;
-                document.getElementById('c-saldo').innerText = data.huellitas_saldo;
-                document.getElementById('panel').style.display = 'block';
-            } else {
-                alert("Cliente no encontrado");
-                iniciar();
+                clienteActualId = data.id;
+
+                document.getElementById("cliente-nombre").textContent = data.nombre;
+                document.getElementById("cliente-saldo").textContent = `${data.huellitas_saldo} / 10`;
+                
+                // Mostrar/ocultar botón de canje según saldo
+                const btnCanje = document.getElementById("btn-canje");
+                if (data.huellitas_saldo >= 10) {
+                    btnCanje.style.display = "block";
+                } else {
+                    btnCanje.style.display = "none";
+                }
+
+                // Ocultar cámara y mostrar panel
+                document.getElementById("reader").style.display = "none";
+                document.getElementById("panel").style.display = "block";
+            } catch (e) {
+                alert("Error de conexión al buscar el cliente.");
+                reiniciarEscaneo();
             }
         }
 
-        async function enviar(accion) {
-            if (accion.startsWith('CANJE') && !confirm("¿Confirmar canje de 10 huellitas?")) return;
-            const res = await fetch('/api/transaccion', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ cliente_id: clienteIdActual, tipo_accion: accion })
+        function onScanSuccess(decodedText) {
+            if (html5QrCode) {
+                html5QrCode.stop().then(() => {
+                    const idExtraido = extraerId(decodedText);
+                    if (isNaN(idExtraido)) {
+                        alert("El código escaneado no contiene un ID válido: " + decodedText);
+                        iniciarCamara();
+                        return;
+                    }
+                    cargarClientePorId(idExtraido);
+                }).catch(err => console.error(err));
+            }
+        }
+
+        function iniciarCamara() {
+            document.getElementById("reader").style.display = "block";
+            document.getElementById("panel").style.display = "none";
+
+            html5QrCode = new Html5Qrcode("reader");
+            html5QrCode.start(
+                { facingMode: "environment" },
+                { fps: 10, qrbox: { width: 250, height: 250 } },
+                onScanSuccess
+            ).catch(err => {
+                console.warn("No se pudo iniciar con cámara trasera, intentando cualquier cámara...", err);
+                html5QrCode.start(
+                    { facingMode: "user" },
+                    { fps: 10, qrbox: { width: 250, height: 250 } },
+                    onScanSuccess
+                ).catch(e => {
+                    alert("No se pudo acceder a la cámara. Revisa los permisos del navegador.");
+                });
             });
-            const data = await res.json();
-            if (res.ok) {
+        }
+
+        async function enviarAccion(tipoAccion) {
+            if (!clienteActualId) return;
+            try {
+                const res = await fetch("/api/transaccion", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        cliente_id: clienteActualId,
+                        tipo_accion: tipoAccion
+                    })
+                });
+
+                const data = await res.json();
+                if (!res.ok) {
+                    alert(data.detail || "Error al procesar");
+                    return;
+                }
+
                 alert(data.mensaje);
-                cargar(clienteIdActual);
-            } else {
-                alert(data.detail || "Error");
+                document.getElementById("cliente-saldo").textContent = `${data.nuevo_saldo} / 10`;
+
+                // Actualizar estado del botón de canje
+                const btnCanje = document.getElementById("btn-canje");
+                btnCanje.style.display = data.nuevo_saldo >= 10 ? "block" : "none";
+
+            } catch (e) {
+                alert("Error al conectar con el servidor.");
             }
         }
 
-        function reiniciar() { iniciar(); }
-        iniciar();
+        function reiniciarEscaneo() {
+            clienteActualId = null;
+            iniciarCamara();
+        }
+
+        // Iniciar cámara al cargar la página
+        window.addEventListener("DOMContentLoaded", iniciarCamara);
     </script>
 </body>
 </html>
