@@ -117,11 +117,29 @@ def vista_tarjeta(request: Request, cliente_id: int):
         conn.close()
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     
+    # 1. Obtener últimas 5 acumulaciones (visitas)
     cur.execute(
-        f"SELECT * FROM transacciones WHERE cliente_id = {PARAM} ORDER BY fecha DESC LIMIT 5",
+        f"""
+        SELECT descripcion, cantidad, fecha 
+        FROM transacciones 
+        WHERE cliente_id = {PARAM} AND tipo = 'ACUMULACION' 
+        ORDER BY fecha DESC LIMIT 5
+        """,
         (cliente_id,)
     )
-    historial = cur.fetchall()
+    visitas = cur.fetchall()
+
+    # 2. Obtener historial de canjes
+    cur.execute(
+        f"""
+        SELECT descripcion, cantidad, fecha 
+        FROM transacciones 
+        WHERE cliente_id = {PARAM} AND tipo = 'CANJE' 
+        ORDER BY fecha DESC LIMIT 5
+        """,
+        (cliente_id,)
+    )
+    canjes = cur.fetchall()
     conn.close()
 
     cliente_dict = dict(cliente)
@@ -130,17 +148,50 @@ def vista_tarjeta(request: Request, cliente_id: int):
     porcentaje = min(progreso * 10, 100)
     faltantes = 10 - progreso
 
-    historial_html = ""
-    for item in historial:
-        signo = "+" if item["tipo"] == "ACUMULACION" else "-"
-        historial_html += f"""
-        <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #eee;">
-            <span>{item['descripcion']}</span>
-            <span>{signo}{item['cantidad']}</span>
+    # Función auxiliar para formatear fecha a DD/MM
+    def formatear_fecha(f):
+        if not f:
+            return ""
+        if hasattr(f, "strftime"):
+            return f.strftime("%d/%m")
+        # Si viene como string de SQLite/Postgres (YYYY-MM-DD...)
+        try:
+            partes = str(f).split(" ")[0].split("-")
+            return f"{partes[2]}/{partes[1]}"
+        except Exception:
+            return str(f)[:10]
+
+    # Renderizado de visitas
+    visitas_html = ""
+    for item in visitas:
+        f_str = formatear_fecha(item["fecha"])
+        visitas_html += f"""
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid #f0f0f0;">
+            <div>
+                <span style="font-weight:600; color:#333;">{item['descripcion']}</span>
+                <span style="display:block; font-size:0.75rem; color:#888;">{f_str}</span>
+            </div>
+            <span style="font-weight:700; color:#bc6c25;">+{item['cantidad']} 🐾</span>
         </div>
         """
-    if not historial:
-        historial_html = '<p style="color:#999; font-size:0.8rem; margin:8px 0 0;">Aún no tienes movimientos registrados.</p>'
+    if not visitas:
+        visitas_html = '<p style="color:#999; font-size:0.8rem; margin:8px 0;">Aún no registras visitas.</p>'
+
+    # Renderizado de canjes
+    canjes_html = ""
+    for item in canjes:
+        f_str = formatear_fecha(item["fecha"])
+        canjes_html += f"""
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid #f0f0f0;">
+            <div>
+                <span style="font-weight:600; color:#2a9d8f;">{item['descripcion']}</span>
+                <span style="display:block; font-size:0.75rem; color:#888;">{f_str}</span>
+            </div>
+            <span style="font-weight:700; color:#e76f51;">-{item['cantidad']} pts</span>
+        </div>
+        """
+    if not canjes:
+        canjes_html = '<p style="color:#999; font-size:0.8rem; margin:8px 0;">Aún no has realizado canjes.</p>'
 
     aviso_meta = '<p style="margin:8px 0 0; font-size:0.85rem; font-weight:bold; color:#2a9d8f;">¡Tienes recompensa disponible! 🎉</p>' if saldo >= 10 else f'<p style="margin:8px 0 0; font-size:0.8rem; color:#777;">Te faltan {faltantes} para tu cortesía</p>'
 
@@ -153,30 +204,96 @@ def vista_tarjeta(request: Request, cliente_id: int):
         <title>Mi Tarjeta Digital | Latte&Go</title>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
         <style>
-            body {{ font-family: -apple-system, sans-serif; background-color: #f7f4ef; color: #333; margin: 0; padding: 20px 16px; display: flex; justify-content: center; box-sizing: border-box; }}
-            .card {{ background: #fff; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); width: 100%; max-width: 360px; padding: 24px; text-align: center; box-sizing: border-box; }}
-            .saldo-box {{ background: #fdf8f0; border: 2px dashed #d4a373; border-radius: 16px; padding: 16px; margin: 16px 0; }}
-            .puntos {{ font-size: 3rem; font-weight: 800; color: #bc6c25; line-height: 1; }}
-            .barra-bg {{ background: #e9ecef; border-radius: 10px; height: 12px; margin-top: 12px; overflow: hidden; }}
-            .barra-fill {{ background: #bc6c25; height: 100%; width: {porcentaje}%; }}
-            #qrcode {{ display: flex; justify-content: center; margin: 18px 0 10px; }}
-            .hist {{ text-align: left; margin-top: 20px; font-size: 0.85rem; }}
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                background-color: #f7f4ef;
+                color: #333;
+                margin: 0;
+                padding: 20px 16px;
+                display: flex;
+                justify-content: center;
+                box-sizing: border-box;
+            }}
+            .card {{
+                background: #ffffff;
+                border-radius: 20px;
+                box-shadow: 0 4px 18px rgba(0,0,0,0.08);
+                width: 100%;
+                max-width: 360px;
+                padding: 24px;
+                text-align: center;
+                box-sizing: border-box;
+            }}
+            .saldo-box {{
+                background: #fdf8f0;
+                border: 2px dashed #d4a373;
+                border-radius: 16px;
+                padding: 16px;
+                margin: 16px 0;
+            }}
+            .puntos {{
+                font-size: 3rem;
+                font-weight: 800;
+                color: #bc6c25;
+                line-height: 1;
+            }}
+            .barra-bg {{
+                background: #e9ecef;
+                border-radius: 10px;
+                height: 12px;
+                margin-top: 12px;
+                overflow: hidden;
+            }}
+            .barra-fill {{
+                background: #bc6c25;
+                height: 100%;
+                width: {porcentaje}%;
+            }}
+            #qrcode {{
+                display: flex;
+                justify-content: center;
+                margin: 18px 0 10px;
+            }}
+            .section-hist {{
+                text-align: left;
+                margin-top: 22px;
+            }}
+            .section-title {{
+                font-size: 0.85rem;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                font-weight: 700;
+                color: #6b5b50;
+                border-bottom: 2px solid #f0e6df;
+                padding-bottom: 4px;
+                margin-bottom: 8px;
+            }}
         </style>
     </head>
     <body>
         <div class="card">
             <h1 style="font-size:1.3rem; margin:0; color:#4a3427;">¡Hola, {cliente_dict['nombre']}! 🐾</h1>
             <p style="margin:4px 0 0; font-size:0.8rem; color:#777;">Muestra tu QR en barra al ordenar</p>
+            
             <div class="saldo-box">
                 <div class="puntos">{cliente_dict['huellitas_saldo']}</div>
                 <div style="font-size:0.85rem; color:#6b5b50; margin-top:4px;">Huellitas acumuladas</div>
                 <div class="barra-bg"><div class="barra-fill"></div></div>
                 {aviso_meta}
             </div>
+
             <div id="qrcode"></div>
-            <div class="hist">
-                <strong>Últimas visitas</strong>
-                {historial_html}
+
+            <!-- Sección de Visitas -->
+            <div class="section-hist">
+                <div class="section-title">🐾 Últimas Visitas</div>
+                {visitas_html}
+            </div>
+
+            <!-- Sección de Canjes -->
+            <div class="section-hist">
+                <div class="section-title">🎁 Cortesías Canjeadas</div>
+                {canjes_html}
             </div>
         </div>
         <script>
@@ -192,6 +309,7 @@ def vista_tarjeta(request: Request, cliente_id: int):
     </html>
     """
     return HTMLResponse(content=html_content)
+
 
 @app.get("/caja", response_class=HTMLResponse)
 def vista_caja(request: Request):
