@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Terminal Barista | Latte&Go</title>
-    <!-- Librería de escáner QR -->
     <script src="https://unpkg.com/html5-qrcode"></script>
     <style>
         body {
@@ -19,7 +18,7 @@
         }
         .container {
             width: 100%;
-            max-width: 400px;
+            max-width: 420px;
             text-align: center;
         }
         h1 {
@@ -34,6 +33,33 @@
             overflow: hidden;
             margin: 16px 0;
             border: 2px solid #4a3427;
+        }
+        .manual-box {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 12px;
+            border-radius: 12px;
+            margin-bottom: 16px;
+            display: flex;
+            gap: 8px;
+        }
+        .manual-box input {
+            flex: 1;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #4a3427;
+            background: #fff;
+            color: #333;
+            font-size: 1rem;
+            text-align: center;
+        }
+        .manual-box button {
+            background: #bc6c25;
+            color: #fff;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
         }
         .panel-cliente {
             display: none;
@@ -51,55 +77,55 @@
             margin: 0;
         }
         .saldo-tag {
-            font-size: 2.2rem;
+            font-size: 2.4rem;
             font-weight: 800;
             color: #bc6c25;
             margin: 10px 0;
         }
-        .grid-botones {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-top: 16px;
-        }
         .btn {
             border: none;
             border-radius: 12px;
-            padding: 14px;
-            font-size: 0.95rem;
-            font-weight: 600;
+            padding: 16px;
+            font-size: 1.05rem;
+            font-weight: 700;
             cursor: pointer;
-            transition: transform 0.1s;
+            width: 100%;
+            box-sizing: border-box;
+            transition: transform 0.1s, opacity 0.2s;
         }
         .btn:active {
-            transform: scale(0.97);
+            transform: scale(0.98);
         }
-        .btn-acumular {
+        .btn-visita {
             background-color: #bc6c25;
-            color: #fff;
+            color: #ffffff;
+            margin-top: 8px;
         }
         .btn-canje {
             background-color: #2a9d8f;
-            color: #fff;
-            grid-column: span 2;
+            color: #ffffff;
+            margin-top: 12px;
         }
         .btn-reset {
             background-color: #e9ecef;
-            color: #555;
+            color: #555555;
             margin-top: 14px;
-            width: 100%;
-        }
-        .aviso {
-            font-size: 0.85rem;
-            color: #bbb;
-            margin-top: 8px;
+            padding: 12px;
+            font-size: 0.9rem;
+            font-weight: 600;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>☕ Terminal Barista</h1>
-        <p class="aviso">Escanea el código QR de la tarjeta del cliente</p>
+        <p style="font-size:0.85rem; color:#bbb; margin:4px 0 14px;">Escanea el código QR o ingresa el ID</p>
+
+        <!-- Entrada manual de respaldo -->
+        <div class="manual-box">
+            <input type="number" id="input-manual-id" placeholder="ID del cliente (ej. 1)">
+            <button onclick="buscarManual()">Buscar</button>
+        </div>
 
         <!-- Lector de cámara -->
         <div id="reader"></div>
@@ -107,16 +133,16 @@
         <!-- Panel del Cliente -->
         <div id="panel" class="panel-cliente">
             <h2 id="cliente-nombre" class="nombre-cliente"></h2>
-            <div id="cliente-saldo" class="saldo-tag">0</div>
+            <div id="cliente-saldo" class="saldo-tag">0 / 10</div>
             <p style="margin: 0 0 16px; font-size: 0.85rem; color: #777;">Huellitas acumuladas</p>
 
-            <div class="grid-botones">
-                <button class="btn btn-acumular" onclick="enviarAccion('BEBIDA')">☕ +1 Bebida</button>
-                <button class="btn btn-acumular" onclick="enviarAccion('PAN')">🥐 +1 Pan</button>
-                <button id="btn-canje" class="btn btn-canje" onclick="enviarAccion('CANJE_BEBIDA')">🎉 Canjear Cortesía (10 pts)</button>
-            </div>
+            <!-- Botón único de visita -->
+            <button class="btn btn-visita" onclick="enviarAccion('VISITA')">🐾 +1 Huellita (Registrar Visita)</button>
+            
+            <!-- Botón condicional de cortesía -->
+            <button id="btn-canje" class="btn btn-canje" onclick="enviarAccion('CANJE')" style="display: none;">🎉 Canjear Cortesía (10 pts)</button>
 
-            <button class="btn btn-reset" onclick="reiniciarEscaneo()">Escanear otro cliente</button>
+            <button class="btn btn-reset" onclick="reiniciarEscaneo()">Escanear siguiente cliente</button>
         </div>
     </div>
 
@@ -124,22 +150,28 @@
         let html5QrCode = null;
         let clienteActualId = null;
 
-        function extraerId(texto) {
-            let limpio = String(texto).trim();
-            // Si el QR contiene una URL completa (ej: .../tarjeta/1), toma el último segmento
-            if (limpio.includes("/")) {
-                const segmentos = limpio.split("/").filter(s => s.length > 0);
-                limpio = segmentos[segmentos.length - 1];
+        function limpiarId(texto) {
+            let str = String(texto).trim();
+            if (str.includes("/")) {
+                const partes = str.split("/").filter(p => p.trim().length > 0);
+                str = partes[partes.length - 1];
             }
-            return parseInt(limpio, 10);
+            return parseInt(str, 10);
         }
 
         async function cargarClientePorId(id) {
+            if (!id || isNaN(id)) {
+                alert("ID inválido: " + id);
+                reiniciarEscaneo();
+                return;
+            }
+
+            const urlPeticion = `/api/cliente/${id}`;
             try {
-                const res = await fetch(`/api/cliente/${id}`);
+                const res = await fetch(urlPeticion);
                 if (!res.ok) {
-                    const err = await res.json();
-                    alert(err.detail || "Cliente no encontrado");
+                    const errorJson = await res.json().catch(() => null);
+                    alert(errorJson ? errorJson.detail : `Error al consultar cliente.`);
                     reiniciarEscaneo();
                     return;
                 }
@@ -149,33 +181,36 @@
                 document.getElementById("cliente-nombre").textContent = data.nombre;
                 document.getElementById("cliente-saldo").textContent = `${data.huellitas_saldo} / 10`;
                 
-                // Mostrar/ocultar botón de canje según saldo
                 const btnCanje = document.getElementById("btn-canje");
-                if (data.huellitas_saldo >= 10) {
-                    btnCanje.style.display = "block";
-                } else {
-                    btnCanje.style.display = "none";
-                }
+                btnCanje.style.display = data.huellitas_saldo >= 10 ? "block" : "none";
 
-                // Ocultar cámara y mostrar panel
                 document.getElementById("reader").style.display = "none";
                 document.getElementById("panel").style.display = "block";
             } catch (e) {
-                alert("Error de conexión al buscar el cliente.");
+                alert("Error de red al consultar el cliente.");
                 reiniciarEscaneo();
+            }
+        }
+
+        function buscarManual() {
+            const val = document.getElementById("input-manual-id").value;
+            const id = parseInt(val, 10);
+            if (id) {
+                if (html5QrCode && html5QrCode.isScanning) {
+                    html5QrCode.stop().then(() => cargarClientePorId(id)).catch(() => cargarClientePorId(id));
+                } else {
+                    cargarClientePorId(id);
+                }
+            } else {
+                alert("Ingresa un número de ID válido");
             }
         }
 
         function onScanSuccess(decodedText) {
             if (html5QrCode) {
                 html5QrCode.stop().then(() => {
-                    const idExtraido = extraerId(decodedText);
-                    if (isNaN(idExtraido)) {
-                        alert("El código escaneado no contiene un ID válido: " + decodedText);
-                        iniciarCamara();
-                        return;
-                    }
-                    cargarClientePorId(idExtraido);
+                    const id = limpiarId(decodedText);
+                    cargarClientePorId(id);
                 }).catch(err => console.error(err));
             }
         }
@@ -183,20 +218,23 @@
         function iniciarCamara() {
             document.getElementById("reader").style.display = "block";
             document.getElementById("panel").style.display = "none";
+            document.getElementById("input-manual-id").value = "";
 
-            html5QrCode = new Html5Qrcode("reader");
+            if (!html5QrCode) {
+                html5QrCode = new Html5Qrcode("reader");
+            }
+
             html5QrCode.start(
                 { facingMode: "environment" },
                 { fps: 10, qrbox: { width: 250, height: 250 } },
                 onScanSuccess
             ).catch(err => {
-                console.warn("No se pudo iniciar con cámara trasera, intentando cualquier cámara...", err);
                 html5QrCode.start(
                     { facingMode: "user" },
                     { fps: 10, qrbox: { width: 250, height: 250 } },
                     onScanSuccess
                 ).catch(e => {
-                    alert("No se pudo acceder a la cámara. Revisa los permisos del navegador.");
+                    console.log("Cámara no activa o sin permisos");
                 });
             });
         }
@@ -221,11 +259,7 @@
 
                 alert(data.mensaje);
                 document.getElementById("cliente-saldo").textContent = `${data.nuevo_saldo} / 10`;
-
-                // Actualizar estado del botón de canje
-                const btnCanje = document.getElementById("btn-canje");
-                btnCanje.style.display = data.nuevo_saldo >= 10 ? "block" : "none";
-
+                document.getElementById("btn-canje").style.display = data.nuevo_saldo >= 10 ? "block" : "none";
             } catch (e) {
                 alert("Error al conectar con el servidor.");
             }
@@ -236,7 +270,6 @@
             iniciarCamara();
         }
 
-        // Iniciar cámara al cargar la página
         window.addEventListener("DOMContentLoaded", iniciarCamara);
     </script>
 </body>
