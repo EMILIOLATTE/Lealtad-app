@@ -544,8 +544,9 @@ def procesar_transaccion(datos: SolicitudTransaccion):
 
     saldo = cliente["huellitas_saldo"]
 
-    if datos.tipo_accion in ["BEBIDA", "PAN"]:
-        desc = "Compra de bebida" if datos.tipo_accion == "BEBIDA" else "Compra de pan"
+    # Acción de acumulación simplificada a Visita
+    if datos.tipo_accion in ["VISITA", "BEBIDA", "PAN"]:
+        desc = "Visita"
         cur.execute(f"UPDATE clientes SET huellitas_saldo = huellitas_saldo + 1 WHERE id = {PARAM}", (datos.cliente_id,))
         cur.execute(
             f"INSERT INTO transacciones (cliente_id, tipo, cantidad, descripcion) VALUES ({PARAM}, 'ACUMULACION', 1, {PARAM})",
@@ -555,6 +556,22 @@ def procesar_transaccion(datos: SolicitudTransaccion):
         conn.close()
         return {"mensaje": "¡Huellita registrada!", "nuevo_saldo": saldo + 1}
 
+    elif datos.tipo_accion in ["CANJE_BEBIDA", "CANJE_PAN", "CANJE"]:
+        if saldo < HUELLITAS_CANJE:
+            conn.close()
+            raise HTTPException(status_code=400, detail=f"Saldo insuficiente. Tiene {saldo} de 10 huellitas.")
+        desc = "Bebida de cortesía"
+        cur.execute(f"UPDATE clientes SET huellitas_saldo = huellitas_saldo - {PARAM} WHERE id = {PARAM}", (HUELLITAS_CANJE, datos.cliente_id))
+        cur.execute(
+            f"INSERT INTO transacciones (cliente_id, tipo, cantidad, descripcion) VALUES ({PARAM}, 'CANJE', {PARAM}, {PARAM})",
+            (datos.cliente_id, HUELLITAS_CANJE, desc)
+        )
+        conn.commit()
+        conn.close()
+        return {"mensaje": "¡Canje exitoso!", "nuevo_saldo": saldo - HUELLITAS_CANJE}
+
+    conn.close()
+    raise HTTPException(status_code=400, detail="Acción no válida")
     elif datos.tipo_accion in ["CANJE_BEBIDA", "CANJE_PAN"]:
         if saldo < HUELLITAS_CANJE:
             conn.close()
