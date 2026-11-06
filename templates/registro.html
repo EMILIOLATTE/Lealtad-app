@@ -34,18 +34,19 @@
         .subtitulo {
             font-size: 0.95rem;
             color: #6b5b50;
-            margin: 0 0 20px;
+            margin: 0 0 18px;
             line-height: 1.4;
         }
         .beneficio-box {
             background: #fdf8f0;
             border: 1px dashed #d4a373;
             border-radius: 12px;
-            padding: 12px;
+            padding: 14px 12px;
             margin-bottom: 22px;
-            font-size: 0.85rem;
+            font-size: 0.88rem;
             color: #bc6c25;
             font-weight: 600;
+            line-height: 1.4;
         }
         .form-group {
             text-align: left;
@@ -102,8 +103,9 @@
         <h1 class="logo-title">Latte&Go 🐾</h1>
         <p class="subtitulo">Programa de Lealtad</p>
 
+        <!-- Aquí va el recuadro de bienvenida con las 2 huellitas -->
         <div class="beneficio-box">
-            Acumula visitas y obtén una cortesía al llegar a 10 huellitas.
+            🎁 ¡Regístrate hoy y recibe tus primeras 2 huellitas de regalo! Al llegar a 10 obtén tu cortesía.
         </div>
 
         <form id="registro-form" onsubmit="enviarRegistro(event)">
@@ -126,7 +128,7 @@
         </form>
 
         <p class="nota-privacidad">
-            Si ya tienes tarjeta registrada, solo ingresa tu correo y nombre para abrirla de inmediato.
+            Si ya tienes tarjeta registrada, solo ingresa tu correo para abrirla de inmediato.
         </p>
     </div>
 
@@ -162,9 +164,8 @@
                     return;
                 }
 
-                // Redirección inmediata a la tarjeta digital
+                // Redirige usando el token seguro
                 window.location.href = `/tarjeta/${data.token}`;
-
             } catch (err) {
                 alert("Error de conexión. Inténtalo de nuevo.");
                 btn.disabled = false;
@@ -174,7 +175,3 @@
     </script>
 </body>
 </html>
-<div class="beneficio-box">
-    🎁 ¡Regístrate hoy y recibe tus primeras 2 huellitas de regalo! Al llegar a 10 obtén tu cortesía.
-</div>
-
