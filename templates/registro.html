@@ -163,7 +163,8 @@
                 }
 
                 // Redirección inmediata a la tarjeta digital
-                window.location.href = `/tarjeta/${data.cliente_id}`;
+                window.location.href = `/tarjeta/${data.token}`;
+
             } catch (err) {
                 alert("Error de conexión. Inténtalo de nuevo.");
                 btn.disabled = false;
