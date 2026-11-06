@@ -1,9 +1,10 @@
 import os
+import uuid
 from pathlib import Path
 from datetime import date
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -15,6 +16,7 @@ app = FastAPI()
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+PIN_BARISTA = os.getenv("PIN_BARISTA", "1234")  # Puedes cambiarlo aquí o en Render Environment
 
 if DATABASE_URL:
     import psycopg2
@@ -32,11 +34,21 @@ if DATABASE_URL:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS clientes (
                     id SERIAL PRIMARY KEY,
+                    token_qr TEXT UNIQUE NOT NULL,
                     nombre TEXT NOT NULL,
                     correo TEXT UNIQUE NOT NULL,
                     fecha_nacimiento DATE,
                     huellitas_saldo INTEGER DEFAULT 0
                 );
+            """)
+            # Migración automática si la columna no existía previamente
+            cur.execute("""
+                DO $$ 
+                BEGIN 
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='clientes' AND column_name='token_qr') THEN 
+                        ALTER TABLE clientes ADD COLUMN token_qr TEXT UNIQUE;
+                    END IF; 
+                END $$;
             """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS transacciones (
@@ -66,6 +78,7 @@ else:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS clientes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token_qr TEXT UNIQUE NOT NULL,
                 nombre TEXT NOT NULL,
                 correo TEXT UNIQUE NOT NULL,
                 fecha_nacimiento DATE,
@@ -93,8 +106,9 @@ class ClienteAlta(BaseModel):
     fecha_nacimiento: Optional[date] = None
 
 class SolicitudTransaccion(BaseModel):
-    cliente_id: int
+    token: str
     tipo_accion: str
+    pin: Optional[str] = None
 
 HUELLITAS_CANJE = 10
 
@@ -105,17 +119,20 @@ HUELLITAS_CANJE = 10
 def vista_registro(request: Request):
     return templates.TemplateResponse(request=request, name="registro.html", context={})
 
-@app.get("/tarjeta/{cliente_id}", response_class=HTMLResponse)
-def vista_tarjeta(request: Request, cliente_id: int):
+@app.get("/tarjeta/{token}", response_class=HTMLResponse)
+def vista_tarjeta(request: Request, token: str):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(f"SELECT * FROM clientes WHERE id = {PARAM}", (cliente_id,))
+    cur.execute(f"SELECT * FROM clientes WHERE token_qr = {PARAM}", (token,))
     cliente = cur.fetchone()
     
     if not cliente:
         conn.close()
-        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+        raise HTTPException(status_code=404, detail="Tarjeta no encontrada o enlace inválido.")
     
+    cliente_dict = dict(cliente)
+    cliente_id = cliente_dict["id"]
+
     cur.execute(
         f"""
         SELECT descripcion, cantidad, fecha 
@@ -139,7 +156,6 @@ def vista_tarjeta(request: Request, cliente_id: int):
     canjes = cur.fetchall()
     conn.close()
 
-    cliente_dict = dict(cliente)
     saldo = cliente_dict.get("huellitas_saldo", 0)
     progreso = saldo % 10
     porcentaje = min(progreso * 10, 100)
@@ -288,8 +304,9 @@ def vista_tarjeta(request: Request, cliente_id: int):
             </div>
         </div>
         <script>
+            // El QR almacena el token seguro e inaccesible
             new QRCode(document.getElementById("qrcode"), {{
-                text: "{cliente_dict['id']}",
+                text: "{cliente_dict['token_qr']}",
                 width: 140,
                 height: 140,
                 colorDark: "#2b1e16",
@@ -313,45 +330,53 @@ def registrar_cliente(datos: ClienteAlta):
     cur = conn.cursor()
     correo_limpio = datos.correo.lower().strip()
     try:
-        cur.execute(f"SELECT id FROM clientes WHERE correo = {PARAM}", (correo_limpio,))
+        cur.execute(f"SELECT token_qr FROM clientes WHERE correo = {PARAM}", (correo_limpio,))
         existente = cur.fetchone()
         if existente:
+            token = existente["token_qr"]
+            # Si un usuario previo no tenía token generado, se le asigna uno
+            if not token:
+                token = str(uuid.uuid4())
+                cur.execute(f"UPDATE clientes SET token_qr = {PARAM} WHERE correo = {PARAM}", (token, correo_limpio))
+                conn.commit()
             conn.close()
-            return {"cliente_id": existente["id"], "mensaje": "¡Bienvenido de vuelta!"}
+            return {"token": token, "mensaje": "¡Bienvenido de vuelta!"}
 
         fecha_val = str(datos.fecha_nacimiento) if datos.fecha_nacimiento else None
+        nuevo_token = str(uuid.uuid4())
+
         if DATABASE_URL:
             cur.execute(
                 """
-                INSERT INTO clientes (nombre, correo, fecha_nacimiento, huellitas_saldo) 
-                VALUES (%s, %s, %s, 0) RETURNING id
+                INSERT INTO clientes (token_qr, nombre, correo, fecha_nacimiento, huellitas_saldo) 
+                VALUES (%s, %s, %s, %s, 0) RETURNING token_qr
                 """,
-                (datos.nombre.strip(), correo_limpio, fecha_val)
+                (nuevo_token, datos.nombre.strip(), correo_limpio, fecha_val)
             )
             fila = cur.fetchone()
-            cliente_id = fila["id"]
+            token = fila["token_qr"]
         else:
             cur.execute(
                 """
-                INSERT INTO clientes (nombre, correo, fecha_nacimiento, huellitas_saldo) 
-                VALUES (?, ?, ?, 0)
+                INSERT INTO clientes (token_qr, nombre, correo, fecha_nacimiento, huellitas_saldo) 
+                VALUES (?, ?, ?, ?, 0)
                 """,
-                (datos.nombre.strip(), correo_limpio, fecha_val)
+                (nuevo_token, datos.nombre.strip(), correo_limpio, fecha_val)
             )
-            cliente_id = cur.lastrowid
+            token = nuevo_token
         conn.commit()
-        return {"cliente_id": cliente_id, "mensaje": "¡Registro exitoso!"}
+        return {"token": token, "mensaje": "¡Registro exitoso!"}
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=f"Error en base de datos: {str(e)}")
     finally:
         conn.close()
 
-@app.get("/api/cliente/{cliente_id}")
-def obtener_cliente(cliente_id: int):
+@app.get("/api/cliente/{token}")
+def obtener_cliente(token: str):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(f"SELECT id, nombre, huellitas_saldo FROM clientes WHERE id = {PARAM}", (cliente_id,))
+    cur.execute(f"SELECT token_qr, nombre, huellitas_saldo FROM clientes WHERE token_qr = {PARAM}", (token,))
     cliente = cur.fetchone()
     conn.close()
     if not cliente:
@@ -360,23 +385,28 @@ def obtener_cliente(cliente_id: int):
 
 @app.post("/api/transaccion")
 def procesar_transaccion(datos: SolicitudTransaccion):
+    # Verificación de seguridad de barista
+    if datos.pin != PIN_BARISTA:
+        raise HTTPException(status_code=403, detail="PIN de barista inválido o no autorizado.")
+
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(f"SELECT huellitas_saldo FROM clientes WHERE id = {PARAM}", (datos.cliente_id,))
+    cur.execute(f"SELECT id, huellitas_saldo FROM clientes WHERE token_qr = {PARAM}", (datos.token,))
     cliente = cur.fetchone()
 
     if not cliente:
         conn.close()
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
+    cliente_id = cliente["id"]
     saldo = cliente["huellitas_saldo"]
 
     if datos.tipo_accion in ["VISITA", "BEBIDA", "PAN"]:
         desc = "Visita"
-        cur.execute(f"UPDATE clientes SET huellitas_saldo = huellitas_saldo + 1 WHERE id = {PARAM}", (datos.cliente_id,))
+        cur.execute(f"UPDATE clientes SET huellitas_saldo = huellitas_saldo + 1 WHERE id = {PARAM}", (cliente_id,))
         cur.execute(
             f"INSERT INTO transacciones (cliente_id, tipo, cantidad, descripcion) VALUES ({PARAM}, 'ACUMULACION', 1, {PARAM})",
-            (datos.cliente_id, desc)
+            (cliente_id, desc)
         )
         conn.commit()
         conn.close()
@@ -387,10 +417,10 @@ def procesar_transaccion(datos: SolicitudTransaccion):
             conn.close()
             raise HTTPException(status_code=400, detail=f"Saldo insuficiente. Tiene {saldo} de 10 huellitas.")
         desc = "Bebida de cortesía"
-        cur.execute(f"UPDATE clientes SET huellitas_saldo = huellitas_saldo - {PARAM} WHERE id = {PARAM}", (HUELLITAS_CANJE, datos.cliente_id))
+        cur.execute(f"UPDATE clientes SET huellitas_saldo = huellitas_saldo - {PARAM} WHERE id = {PARAM}", (HUELLITAS_CANJE, cliente_id))
         cur.execute(
             f"INSERT INTO transacciones (cliente_id, tipo, cantidad, descripcion) VALUES ({PARAM}, 'CANJE', {PARAM}, {PARAM})",
-            (datos.cliente_id, HUELLITAS_CANJE, desc)
+            (cliente_id, HUELLITAS_CANJE, desc)
         )
         conn.commit()
         conn.close()
