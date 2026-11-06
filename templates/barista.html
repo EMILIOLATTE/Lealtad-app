@@ -20,6 +20,7 @@
             width: 100%;
             max-width: 420px;
             text-align: center;
+            position: relative;
         }
         h1 {
             font-size: 1.4rem;
@@ -114,16 +115,46 @@
             font-size: 0.9rem;
             font-weight: 600;
         }
+
+        /* Notificación emergente Toast */
+        .toast {
+            position: fixed;
+            top: 24px;
+            left: 50%;
+            transform: translateX(-50%) translateY(-100px);
+            background: #2a9d8f;
+            color: #ffffff;
+            padding: 14px 22px;
+            border-radius: 30px;
+            font-weight: 700;
+            font-size: 1rem;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            opacity: 0;
+            transition: all 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+            z-index: 9999;
+        }
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+        .toast.canje {
+            background: #e76f51;
+        }
     </style>
 </head>
 <body>
+    <div id="toast" class="toast">¡Huellita registrada! 🐾</div>
+
     <div class="container">
         <h1>☕ Terminal Barista</h1>
-        <p style="font-size:0.85rem; color:#bbb; margin:4px 0 14px;">Escanea el código QR o ingresa el ID</p>
+        <p style="font-size:0.85rem; color:#bbb; margin:4px 0 14px;">Escanea el código QR o ingresa el identificador</p>
 
         <!-- Entrada manual de respaldo -->
         <div class="manual-box">
-            <input type="number" id="input-manual-id" placeholder="ID del cliente (ej. 1)">
+            <input type="text" id="input-manual" placeholder="ID o Token del cliente">
             <button onclick="buscarManual()">Buscar</button>
         </div>
 
@@ -136,47 +167,119 @@
             <div id="cliente-saldo" class="saldo-tag">0 / 10</div>
             <p style="margin: 0 0 16px; font-size: 0.85rem; color: #777;">Huellitas acumuladas</p>
 
-            <!-- Botón único de visita -->
-            <button class="btn btn-visita" onclick="enviarAccion('VISITA')">🐾 +1 Huellita (Registrar Visita)</button>
-            
-            <!-- Botón condicional de cortesía -->
+            <button class="btn btn-visita" id="btn-registrar-visita" onclick="enviarAccion('VISITA')">🐾 +1 Huellita (Registrar Visita)</button>
             <button id="btn-canje" class="btn btn-canje" onclick="enviarAccion('CANJE')" style="display: none;">🎉 Canjear Cortesía (10 pts)</button>
 
-            <button class="btn btn-reset" onclick="reiniciarEscaneo()">Escanear siguiente cliente</button>
+            <button class="btn btn-reset" onclick="reiniciarEscaneo()">Cancelar / Escanear otro</button>
         </div>
     </div>
 
     <script>
         let html5QrCode = null;
-        let clienteActualId = null;
+        let identificadorActual = null;
+        let audioCtx = null;
 
-        function limpiarId(texto) {
+        // Inicialización del motor de audio al interactuar
+        function getAudioContext() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            return audioCtx;
+        }
+
+        // Sonido 1: Warm Chime (Huellita normal)
+        function sonarHuellita() {
+            try {
+                const ctx = getAudioContext();
+                const now = ctx.currentTime;
+
+                // Tono 1: Re5 (587.33 Hz)
+                const osc1 = ctx.createOscillator();
+                const gain1 = ctx.createGain();
+                osc1.type = "sine";
+                osc1.frequency.setValueAtTime(587.33, now);
+                gain1.gain.setValueAtTime(0.2, now);
+                gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+                osc1.connect(gain1);
+                gain1.connect(ctx.destination);
+                osc1.start(now);
+                osc1.stop(now + 0.15);
+
+                // Tono 2: La5 (880 Hz)
+                const osc2 = ctx.createOscillator();
+                const gain2 = ctx.createGain();
+                osc2.type = "sine";
+                osc2.frequency.setValueAtTime(880.00, now + 0.08);
+                gain2.gain.setValueAtTime(0.2, now + 0.08);
+                gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+                osc2.connect(gain2);
+                gain2.connect(ctx.destination);
+                osc2.start(now + 0.08);
+                osc2.stop(now + 0.28);
+            } catch (e) {
+                console.log("Audio no habilitado");
+            }
+        }
+
+        // Sonido 2: Fanfarria de cortesía (Canje de 10 huellitas)
+        function sonarCortesía() {
+            try {
+                const ctx = getAudioContext();
+                const now = ctx.currentTime;
+                const notas = [523.25, 659.25, 783.99, 1046.50]; // Do5, Mi5, Sol5, Do6
+
+                notas.forEach((freq, idx) => {
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    const startTime = now + (idx * 0.07);
+                    osc.type = "sine";
+                    osc.frequency.setValueAtTime(freq, startTime);
+                    gain.gain.setValueAtTime(0.22, startTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.25);
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.start(startTime);
+                    osc.stop(startTime + 0.25);
+                });
+            } catch (e) {
+                console.log("Audio no habilitado");
+            }
+        }
+
+        function mostrarToast(mensaje, esCanje = false) {
+            const toast = document.getElementById("toast");
+            toast.textContent = mensaje;
+            toast.className = esCanje ? "toast canje show" : "toast show";
+            setTimeout(() => {
+                toast.classList.remove("show");
+            }, 1200);
+        }
+
+        function limpiarTextoQR(texto) {
             let str = String(texto).trim();
             if (str.includes("/")) {
                 const partes = str.split("/").filter(p => p.trim().length > 0);
                 str = partes[partes.length - 1];
             }
-            return parseInt(str, 10);
+            return str;
         }
 
-        async function cargarClientePorId(id) {
-            if (!id || isNaN(id)) {
-                alert("ID inválido: " + id);
-                reiniciarEscaneo();
-                return;
-            }
+        async function cargarCliente(identificador) {
+            if (!identificador) return;
 
-            const urlPeticion = `/api/cliente/${id}`;
+            const urlPeticion = `/api/cliente/${identificador}`;
             try {
                 const res = await fetch(urlPeticion);
                 if (!res.ok) {
-                    const errorJson = await res.json().catch(() => null);
-                    alert(errorJson ? errorJson.detail : `Error al consultar cliente.`);
+                    alert("Cliente no encontrado o código no válido.");
                     reiniciarEscaneo();
                     return;
                 }
                 const data = await res.json();
-                clienteActualId = data.id;
+                identificadorActual = data.token_qr || data.id;
 
                 document.getElementById("cliente-nombre").textContent = data.nombre;
                 document.getElementById("cliente-saldo").textContent = `${data.huellitas_saldo} / 10`;
@@ -193,24 +296,23 @@
         }
 
         function buscarManual() {
-            const val = document.getElementById("input-manual-id").value;
-            const id = parseInt(val, 10);
-            if (id) {
+            const val = document.getElementById("input-manual").value.trim();
+            if (val) {
                 if (html5QrCode && html5QrCode.isScanning) {
-                    html5QrCode.stop().then(() => cargarClientePorId(id)).catch(() => cargarClientePorId(id));
+                    html5QrCode.stop().then(() => cargarCliente(val)).catch(() => cargarCliente(val));
                 } else {
-                    cargarClientePorId(id);
+                    cargarCliente(val);
                 }
             } else {
-                alert("Ingresa un número de ID válido");
+                alert("Ingresa un identificador válido");
             }
         }
 
         function onScanSuccess(decodedText) {
             if (html5QrCode) {
                 html5QrCode.stop().then(() => {
-                    const id = limpiarId(decodedText);
-                    cargarClientePorId(id);
+                    const idLimpio = limpiarTextoQR(decodedText);
+                    cargarCliente(idLimpio);
                 }).catch(err => console.error(err));
             }
         }
@@ -218,7 +320,7 @@
         function iniciarCamara() {
             document.getElementById("reader").style.display = "block";
             document.getElementById("panel").style.display = "none";
-            document.getElementById("input-manual-id").value = "";
+            document.getElementById("input-manual").value = "";
 
             if (!html5QrCode) {
                 html5QrCode = new Html5Qrcode("reader");
@@ -240,33 +342,71 @@
         }
 
         async function enviarAccion(tipoAccion) {
-            if (!clienteActualId) return;
+            if (!identificadorActual) return;
+            
+            // Si es canje, pedimos confirmación rápida para evitar toques accidentales
+            if (tipoAccion === 'CANJE' && !confirm("¿Confirmas canjear 10 huellitas por cortesía?")) {
+                return;
+            }
+
+            const btnVisita = document.getElementById("btn-registrar-visita");
+            const btnCanje = document.getElementById("btn-canje");
+            btnVisita.disabled = true;
+            btnCanje.disabled = true;
+
+            const payload = {
+                tipo_accion: tipoAccion
+            };
+            
+            // Asigna token o cliente_id según corresponda
+            if (String(identificadorActual).includes("-")) {
+                payload.token = identificadorActual;
+            } else {
+                payload.cliente_id = parseInt(identificadorActual, 10);
+            }
+
             try {
                 const res = await fetch("/api/transaccion", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        cliente_id: clienteActualId,
-                        tipo_accion: tipoAccion
-                    })
+                    body: JSON.stringify(payload)
                 });
 
                 const data = await res.json();
                 if (!res.ok) {
                     alert(data.detail || "Error al procesar");
+                    btnVisita.disabled = false;
+                    btnCanje.disabled = false;
                     return;
                 }
 
-                alert(data.mensaje);
+                // 1. Reproducir sonido según el tipo de acción
+                if (tipoAccion === 'CANJE') {
+                    sonarCortesía();
+                    mostrarToast("🎉 ¡Cortesía canjeada con éxito!", true);
+                } else {
+                    sonarHuellita();
+                    mostrarToast("🐾 ¡Huellita registrada!", false);
+                }
+
+                // 2. Actualizar visualmente y reiniciar automáticamente la cámara tras 1.2 segundos
                 document.getElementById("cliente-saldo").textContent = `${data.nuevo_saldo} / 10`;
-                document.getElementById("btn-canje").style.display = data.nuevo_saldo >= 10 ? "block" : "none";
+                
+                setTimeout(() => {
+                    btnVisita.disabled = false;
+                    btnCanje.disabled = false;
+                    reiniciarEscaneo();
+                }, 1200);
+
             } catch (e) {
                 alert("Error al conectar con el servidor.");
+                btnVisita.disabled = false;
+                btnCanje.disabled = false;
             }
         }
 
         function reiniciarEscaneo() {
-            clienteActualId = null;
+            identificadorActual = null;
             iniciarCamara();
         }
 
