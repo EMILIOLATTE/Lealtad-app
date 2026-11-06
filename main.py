@@ -5,7 +5,7 @@ from datetime import date
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
@@ -111,7 +111,7 @@ class SolicitudTransaccion(BaseModel):
 HUELLITAS_CANJE = 10
 HUELLITAS_BIENVENIDA = 2
 
-# ----------------- RECURSOS PWA (MANIFEST & ICONO) -----------------
+# ----------------- RECURSOS PWA (MANIFEST & LOGO) -----------------
 
 @app.get("/manifest.json")
 def pwa_manifest():
@@ -120,30 +120,25 @@ def pwa_manifest():
         "short_name": "Latte&Go",
         "start_url": "/registro",
         "display": "standalone",
-        "background_color": "#f7f4ef",
+        "background_color": "#ffd6e0",
         "theme_color": "#2b1e16",
         "icons": [
             {
-                "src": "/icon.svg",
-                "sizes": "192x192 512x512",
-                "type": "image/svg+xml",
+                "src": "/icon.png",
+                "sizes": "512x512",
+                "type": "image/png",
                 "purpose": "any maskable"
             }
         ]
     }
     return JSONResponse(content=manifest_data)
 
-@app.get("/icon.svg")
+@app.get("/icon.png")
 def pwa_icon():
-    svg_content = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-      <rect width="512" height="512" rx="110" fill="#2b1e16"/>
-      <circle cx="256" cy="335" r="75" fill="#d4a373"/>
-      <circle cx="170" cy="205" r="42" fill="#d4a373"/>
-      <circle cx="342" cy="205" r="42" fill="#d4a373"/>
-      <circle cx="215" cy="120" r="38" fill="#bc6c25"/>
-      <circle cx="297" cy="120" r="38" fill="#bc6c25"/>
-    </svg>"""
-    return Response(content=svg_content, media_type="image/svg+xml")
+    ruta_icono = BASE_DIR / "logo.png"
+    if ruta_icono.exists():
+        return FileResponse(ruta_icono, media_type="image/png")
+    return Response(status_code=404)
 
 # ----------------- VISTAS WEB -----------------
 
@@ -245,14 +240,14 @@ def vista_tarjeta(request: Request, token: str):
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
         <title>Mi Tarjeta Digital | Latte&Go</title>
         
-        <!-- PWA Meta tags -->
+        <!-- PWA Meta tags con icono real -->
         <link rel="manifest" href="/manifest.json">
         <meta name="theme-color" content="#2b1e16">
         <meta name="apple-mobile-web-app-capable" content="yes">
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
         <meta name="apple-mobile-web-app-title" content="Latte&Go">
-        <link rel="apple-touch-icon" href="/icon.svg">
-        <link rel="icon" type="image/svg+xml" href="/icon.svg">
+        <link rel="apple-touch-icon" href="/icon.png">
+        <link rel="icon" type="image/png" href="/icon.png">
 
         <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
         <style>
@@ -341,8 +336,6 @@ def vista_tarjeta(request: Request, token: str):
                 padding-bottom: 4px;
                 margin-bottom: 8px;
             }}
-
-            /* Modal de Instrucciones */
             .modal-backdrop {{
                 display: none;
                 position: fixed;
@@ -419,7 +412,6 @@ def vista_tarjeta(request: Request, token: str):
 
             <div id="qrcode"></div>
 
-            <!-- Botón para guardar en pantalla de inicio -->
             <button class="btn-pwa" onclick="abrirGuiaInstalacion()">
                 📲 Guardar tarjeta en mi teléfono
             </button>
@@ -435,7 +427,6 @@ def vista_tarjeta(request: Request, token: str):
             </div>
         </div>
 
-        <!-- Modal con instrucciones según iOS o Android -->
         <div id="modal-guia" class="modal-backdrop" onclick="cerrarGuia(event)">
             <div class="modal-sheet" onclick="event.stopPropagation()">
                 <div style="font-size:2rem; margin-bottom:6px;">☕📱</div>
