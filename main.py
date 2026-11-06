@@ -4,7 +4,7 @@ from pathlib import Path
 from datetime import date
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request, Header
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -16,7 +16,6 @@ app = FastAPI()
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-PIN_BARISTA = os.getenv("PIN_BARISTA", "1234")  # Puedes cambiarlo aquí o en Render Environment
 
 if DATABASE_URL:
     import psycopg2
@@ -41,7 +40,6 @@ if DATABASE_URL:
                     huellitas_saldo INTEGER DEFAULT 0
                 );
             """)
-            # Migración automática si la columna no existía previamente
             cur.execute("""
                 DO $$ 
                 BEGIN 
@@ -106,11 +104,12 @@ class ClienteAlta(BaseModel):
     fecha_nacimiento: Optional[date] = None
 
 class SolicitudTransaccion(BaseModel):
-    token: str
+    token: Optional[str] = None
+    cliente_id: Optional[int] = None
     tipo_accion: str
-    pin: Optional[str] = None
 
 HUELLITAS_CANJE = 10
+HUELLITAS_BIENVENIDA = 2  # Saldo de regalo al registrarse por primera vez
 
 # ----------------- VISTAS WEB -----------------
 
@@ -178,7 +177,7 @@ def vista_tarjeta(request: Request, token: str):
         visitas_html += f"""
         <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #f0f0f0;">
             <div>
-                <span style="font-weight:600; color:#333; font-size:0.95rem;">Visita</span>
+                <span style="font-weight:600; color:#333; font-size:0.95rem;">{item['descripcion']}</span>
                 <span style="display:block; font-size:0.75rem; color:#888;">{f_str}</span>
             </div>
             <span style="font-weight:700; color:#bc6c25;">+{item['cantidad']} 🐾</span>
@@ -304,7 +303,6 @@ def vista_tarjeta(request: Request, token: str):
             </div>
         </div>
         <script>
-            // El QR almacena el token seguro e inaccesible
             new QRCode(document.getElementById("qrcode"), {{
                 text: "{cliente_dict['token_qr']}",
                 width: 140,
@@ -334,7 +332,6 @@ def registrar_cliente(datos: ClienteAlta):
         existente = cur.fetchone()
         if existente:
             token = existente["token_qr"]
-            # Si un usuario previo no tenía token generado, se le asigna uno
             if not token:
                 token = str(uuid.uuid4())
                 cur.execute(f"UPDATE clientes SET token_qr = {PARAM} WHERE correo = {PARAM}", (token, correo_limpio))
@@ -345,39 +342,63 @@ def registrar_cliente(datos: ClienteAlta):
         fecha_val = str(datos.fecha_nacimiento) if datos.fecha_nacimiento else None
         nuevo_token = str(uuid.uuid4())
 
+        # Inserción con saldo inicial de 2 huellitas de regalo
         if DATABASE_URL:
             cur.execute(
                 """
                 INSERT INTO clientes (token_qr, nombre, correo, fecha_nacimiento, huellitas_saldo) 
-                VALUES (%s, %s, %s, %s, 0) RETURNING token_qr
+                VALUES (%s, %s, %s, %s, %s) RETURNING id, token_qr
                 """,
-                (nuevo_token, datos.nombre.strip(), correo_limpio, fecha_val)
+                (nuevo_token, datos.nombre.strip(), correo_limpio, fecha_val, HUELLITAS_BIENVENIDA)
             )
             fila = cur.fetchone()
+            cliente_id = fila["id"]
             token = fila["token_qr"]
+
+            # Registro de la transacción inicial en el historial
+            cur.execute(
+                """
+                INSERT INTO transacciones (cliente_id, tipo, cantidad, descripcion) 
+                VALUES (%s, 'ACUMULACION', %s, 'Regalo de bienvenida')
+                """,
+                (cliente_id, HUELLITAS_BIENVENIDA)
+            )
         else:
             cur.execute(
                 """
                 INSERT INTO clientes (token_qr, nombre, correo, fecha_nacimiento, huellitas_saldo) 
-                VALUES (?, ?, ?, ?, 0)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (nuevo_token, datos.nombre.strip(), correo_limpio, fecha_val)
+                (nuevo_token, datos.nombre.strip(), correo_limpio, fecha_val, HUELLITAS_BIENVENIDA)
             )
+            cliente_id = cur.lastrowid
             token = nuevo_token
+
+            cur.execute(
+                """
+                INSERT INTO transacciones (cliente_id, tipo, cantidad, descripcion) 
+                VALUES (?, 'ACUMULACION', ?, 'Regalo de bienvenida')
+                """,
+                (cliente_id, HUELLITAS_BIENVENIDA)
+            )
+
         conn.commit()
-        return {"token": token, "mensaje": "¡Registro exitoso!"}
+        return {"token": token, "mensaje": "¡Registro exitoso! Disfruta tus primeras 2 huellitas."}
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=f"Error en base de datos: {str(e)}")
     finally:
         conn.close()
 
-@app.get("/api/cliente/{token}")
-def obtener_cliente(token: str):
+@app.get("/api/cliente/{identificador}")
+def obtener_cliente(identificador: str):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(f"SELECT token_qr, nombre, huellitas_saldo FROM clientes WHERE token_qr = {PARAM}", (token,))
+    cur.execute(f"SELECT id, token_qr, nombre, huellitas_saldo FROM clientes WHERE token_qr = {PARAM}", (identificador,))
     cliente = cur.fetchone()
+    if not cliente and identificador.isdigit():
+        cur.execute(f"SELECT id, token_qr, nombre, huellitas_saldo FROM clientes WHERE id = {PARAM}", (int(identificador),))
+        cliente = cur.fetchone()
     conn.close()
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
@@ -385,14 +406,16 @@ def obtener_cliente(token: str):
 
 @app.post("/api/transaccion")
 def procesar_transaccion(datos: SolicitudTransaccion):
-    # Verificación de seguridad de barista
-    if datos.pin != PIN_BARISTA:
-        raise HTTPException(status_code=403, detail="PIN de barista inválido o no autorizado.")
-
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(f"SELECT id, huellitas_saldo FROM clientes WHERE token_qr = {PARAM}", (datos.token,))
-    cliente = cur.fetchone()
+    
+    cliente = None
+    if datos.token:
+        cur.execute(f"SELECT id, huellitas_saldo FROM clientes WHERE token_qr = {PARAM}", (datos.token,))
+        cliente = cur.fetchone()
+    elif datos.cliente_id:
+        cur.execute(f"SELECT id, huellitas_saldo FROM clientes WHERE id = {PARAM}", (datos.cliente_id,))
+        cliente = cur.fetchone()
 
     if not cliente:
         conn.close()
