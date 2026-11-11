@@ -16,7 +16,7 @@ app = FastAPI()
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-ENLACE_GOOGLE_RESEÑAS = os.getenv("GOOGLE_REVIEW_URL", "https://maps.app.goo.gl/LatteAndGo")
+ENLACE_GOOGLE_RESEÑAS = os.getenv("GOOGLE_REVIEW_URL", "https://maps.app.goo.gl/WAUjDrr5zW8cJbqc7")
 
 if DATABASE_URL:
     import psycopg2
