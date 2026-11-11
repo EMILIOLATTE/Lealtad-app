@@ -140,6 +140,11 @@ def pwa_icon():
         return FileResponse(ruta_icono, media_type="image/png")
     return Response(status_code=404)
 
+# Endpoint ligero para mantener despierto el servidor en Render
+@app.get("/ping")
+def health_check():
+    return {"status": "ok"}
+
 # ----------------- VISTAS WEB -----------------
 
 @app.get("/", response_class=HTMLResponse)
