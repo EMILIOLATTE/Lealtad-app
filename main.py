@@ -42,7 +42,12 @@ if DATABASE_URL:
                 );
             """)
             cur.execute("""
-                DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='clientes' AND column_name='token_qr') THEN ALTER TABLE clientes ADD COLUMN token_qr TEXT UNIQUE; END IF; END $$;
+                DO $$ 
+                BEGIN 
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='clientes' AND column_name='token_qr') THEN 
+                        ALTER TABLE clientes ADD COLUMN token_qr TEXT UNIQUE;
+                    END IF; 
+                END $$;
             """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS transacciones (
@@ -513,3 +518,205 @@ def vista_tarjeta(request: Request, token: str):
                         spread: 70,
                         origin: {{ y: 0.6 }},
                         colors: ['#bc6c25', '#d4a373', '#2a9d8f', '#e76f51', '#2b1e16']
+                    }});
+                }}
+            }}
+
+            // Disparo automático si el cliente alcanzó o superó las 10 huellitas
+            window.addEventListener('DOMContentLoaded', () => {{
+                const esGanador = {str(es_ganador).lower()};
+                if (esGanador) {{
+                    setTimeout(lanzarConfeti, 400);
+                }}
+            }});
+
+            let deferredPrompt = null;
+            window.addEventListener('beforeinstallprompt', (e) => {{
+                e.preventDefault();
+                deferredPrompt = e;
+            }});
+
+            function abrirGuiaInstalacion() {{
+                if (deferredPrompt) {{
+                    deferredPrompt.prompt();
+                    deferredPrompt.userChoice.then((choiceResult) => {{
+                        if (choiceResult.outcome === 'accepted') {{
+                            console.log('Cliente instaló la app');
+                        }}
+                        deferredPrompt = null;
+                    }});
+                    return;
+                }}
+
+                const esIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+                const contenedor = document.getElementById("instrucciones-dinamicas");
+
+                if (esIOS) {{
+                    contenedor.innerHTML = `
+                        <div class="step-item">
+                            <div class="step-num">1</div>
+                            <div>Toca el botón <b>Compartir</b> en Safari (el icono de cuadro con flecha hacia arriba ⎋).</div>
+                        </div>
+                        <div class="step-item">
+                            <div class="step-num">2</div>
+                            <div>Baja y selecciona <b>"Agregar a inicio"</b> ➕.</div>
+                        </div>
+                    `;
+                }} else {{
+                    contenedor.innerHTML = `
+                        <div class="step-item">
+                            <div class="step-num">1</div>
+                            <div>Toca los <b>tres puntos (⋮)</b> arriba a la derecha en Chrome.</div>
+                        </div>
+                        <div class="step-item">
+                            <div class="step-num">2</div>
+                            <div>Elige <b>"Instalar aplicación"</b> o <b>"Agregar a la pantalla principal"</b> 📲.</div>
+                        </div>
+                    `;
+                }}
+
+                document.getElementById("modal-guia").style.display = "flex";
+            }}
+
+            function cerrarGuia() {{
+                document.getElementById("modal-guia").style.display = "none";
+            }}
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
+
+@app.get("/caja", response_class=HTMLResponse)
+def vista_caja(request: Request):
+    return templates.TemplateResponse(request=request, name="barista.html", context={})
+
+# ----------------- ENDPOINTS DE API -----------------
+
+@app.post("/api/clientes/registro")
+def registrar_cliente(datos: ClienteAlta):
+    conn = get_db()
+    cur = conn.cursor()
+    correo_limpio = datos.correo.lower().strip()
+    try:
+        cur.execute(f"SELECT token_qr FROM clientes WHERE correo = {PARAM}", (correo_limpio,))
+        existente = cur.fetchone()
+        if existente:
+            token = existente["token_qr"]
+            if not token:
+                token = str(uuid.uuid4())
+                cur.execute(f"UPDATE clientes SET token_qr = {PARAM} WHERE correo = {PARAM}", (token, correo_limpio))
+                conn.commit()
+            conn.close()
+            return {"token": token, "mensaje": "¡Bienvenido de vuelta!"}
+
+        fecha_val = str(datos.fecha_nacimiento) if datos.fecha_nacimiento else None
+        nuevo_token = str(uuid.uuid4())
+
+        if DATABASE_URL:
+            cur.execute(
+                """
+                INSERT INTO clientes (token_qr, nombre, correo, fecha_nacimiento, huellitas_saldo) 
+                VALUES (%s, %s, %s, %s, %s) RETURNING id, token_qr
+                """,
+                (nuevo_token, datos.nombre.strip(), correo_limpio, fecha_val, HUELLITAS_BIENVENIDA)
+            )
+            fila = cur.fetchone()
+            cliente_id = fila["id"]
+            token = fila["token_qr"]
+
+            cur.execute(
+                """
+                INSERT INTO transacciones (cliente_id, tipo, cantidad, descripcion) 
+                VALUES (%s, 'ACUMULACION', %s, 'Regalo de bienvenida')
+                """,
+                (cliente_id, HUELLITAS_BIENVENIDA)
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO clientes (token_qr, nombre, correo, fecha_nacimiento, huellitas_saldo) 
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (nuevo_token, datos.nombre.strip(), correo_limpio, fecha_val, HUELLITAS_BIENVENIDA)
+            )
+            cliente_id = cur.lastrowid
+            token = nuevo_token
+
+            cur.execute(
+                """
+                INSERT INTO transacciones (cliente_id, tipo, cantidad, descripcion) 
+                VALUES (?, 'ACUMULACION', ?, 'Regalo de bienvenida')
+                """,
+                (cliente_id, HUELLITAS_BIENVENIDA)
+            )
+
+        conn.commit()
+        return {"token": token, "mensaje": "¡Registro exitoso! Disfruta tus primeras 2 huellitas."}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error en base de datos: {str(e)}")
+    finally:
+        conn.close()
+
+@app.get("/api/cliente/{identificador}")
+def obtener_cliente(identificador: str):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(f"SELECT id, token_qr, nombre, huellitas_saldo FROM clientes WHERE token_qr = {PARAM}", (identificador,))
+    cliente = cur.fetchone()
+    if not cliente and identificador.isdigit():
+        cur.execute(f"SELECT id, token_qr, nombre, huellitas_saldo FROM clientes WHERE id = {PARAM}", (int(identificador),))
+        cliente = cur.fetchone()
+    conn.close()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    return dict(cliente)
+
+@app.post("/api/transaccion")
+def procesar_transaccion(datos: SolicitudTransaccion):
+    conn = get_db()
+    cur = conn.cursor()
+    
+    cliente = None
+    if datos.token:
+        cur.execute(f"SELECT id, huellitas_saldo FROM clientes WHERE token_qr = {PARAM}", (datos.token,))
+        cliente = cur.fetchone()
+    elif datos.cliente_id:
+        cur.execute(f"SELECT id, huellitas_saldo FROM clientes WHERE id = {PARAM}", (datos.cliente_id,))
+        cliente = cur.fetchone()
+
+    if not cliente:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    cliente_id = cliente["id"]
+    saldo = cliente["huellitas_saldo"]
+
+    if datos.tipo_accion in ["VISITA", "BEBIDA", "PAN"]:
+        desc = "Visita"
+        cur.execute(f"UPDATE clientes SET huellitas_saldo = huellitas_saldo + 1 WHERE id = {PARAM}", (cliente_id,))
+        cur.execute(
+            f"INSERT INTO transacciones (cliente_id, tipo, cantidad, descripcion) VALUES ({PARAM}, 'ACUMULACION', 1, {PARAM})",
+            (cliente_id, desc)
+        )
+        conn.commit()
+        conn.close()
+        return {"mensaje": "¡Huellita registrada!", "nuevo_saldo": saldo + 1}
+
+    elif datos.tipo_accion in ["CANJE_BEBIDA", "CANJE_PAN", "CANJE"]:
+        if saldo < HUELLITAS_CANJE:
+            conn.close()
+            raise HTTPException(status_code=400, detail=f"Saldo insuficiente. Tiene {saldo} de 10 huellitas.")
+        desc = "Bebida de cortesía"
+        cur.execute(f"UPDATE clientes SET huellitas_saldo = huellitas_saldo - {PARAM} WHERE id = {PARAM}", (HUELLITAS_CANJE, cliente_id))
+        cur.execute(
+            f"INSERT INTO transacciones (cliente_id, tipo, cantidad, descripcion) VALUES ({PARAM}, 'CANJE', {PARAM}, {PARAM})",
+            (cliente_id, HUELLITAS_CANJE, desc)
+        )
+        conn.commit()
+        conn.close()
+        return {"mensaje": "¡Canje exitoso!", "nuevo_saldo": saldo - HUELLITAS_CANJE}
+
+    conn.close()
+    raise HTTPException(status_code=400, detail="Acción no válida")
