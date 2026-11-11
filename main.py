@@ -16,6 +16,7 @@ app = FastAPI()
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+ENLACE_GOOGLE_RESEÑAS = os.getenv("GOOGLE_REVIEW_URL", "https://maps.app.goo.gl/LatteAndGo")
 
 if DATABASE_URL:
     import psycopg2
@@ -41,12 +42,7 @@ if DATABASE_URL:
                 );
             """)
             cur.execute("""
-                DO $$ 
-                BEGIN 
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='clientes' AND column_name='token_qr') THEN 
-                        ALTER TABLE clientes ADD COLUMN token_qr TEXT UNIQUE;
-                    END IF; 
-                END $$;
+                DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='clientes' AND column_name='token_qr') THEN ALTER TABLE clientes ADD COLUMN token_qr TEXT UNIQUE; END IF; END $$;
             """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS transacciones (
@@ -140,7 +136,6 @@ def pwa_icon():
         return FileResponse(ruta_icono, media_type="image/png")
     return Response(status_code=404)
 
-# Endpoint ligero para mantener despierto el servidor en Render
 @app.get("/ping")
 def health_check():
     return {"status": "ok"}
@@ -168,6 +163,17 @@ def vista_tarjeta(request: Request, token: str):
 
     cur.execute(
         f"""
+        SELECT tipo, descripcion, fecha 
+        FROM transacciones 
+        WHERE cliente_id = {PARAM} 
+        ORDER BY fecha DESC LIMIT 1
+        """,
+        (cliente_id,)
+    )
+    ultima_transaccion = cur.fetchone()
+
+    cur.execute(
+        f"""
         SELECT descripcion, cantidad, fecha 
         FROM transacciones 
         WHERE cliente_id = {PARAM} AND tipo = 'ACUMULACION' 
@@ -190,8 +196,9 @@ def vista_tarjeta(request: Request, token: str):
     conn.close()
 
     saldo = cliente_dict.get("huellitas_saldo", 0)
-    progreso = saldo % 10
-    porcentaje = min(progreso * 10, 100)
+    es_ganador = saldo >= 10
+    progreso = saldo % 10 if not es_ganador else 10
+    porcentaje = 100 if es_ganador else min(progreso * 10, 100)
     faltantes = 10 - progreso
 
     def formatear_fecha(f):
@@ -235,7 +242,40 @@ def vista_tarjeta(request: Request, token: str):
     if not canjes:
         canjes_html = '<p style="color:#999; font-size:0.8rem; margin:8px 0;">Aún no has realizado canjes.</p>'
 
-    aviso_meta = '<p style="margin:8px 0 0; font-size:0.85rem; font-weight:bold; color:#2a9d8f;">¡Tienes recompensa disponible! 🎉</p>' if saldo >= 10 else f'<p style="margin:8px 0 0; font-size:0.8rem; color:#777;">Te faltan {faltantes} para tu cortesía</p>'
+    if es_ganador:
+        saldo_clase = "saldo-box meta-alcanzada"
+        aviso_meta = """
+        <div style="margin-top:10px;">
+            <p style="margin:0; font-size:0.95rem; font-weight:800; color:#2a9d8f;">¡Bebida de cortesía lista! 🎉</p>
+            <p style="margin:2px 0 8px; font-size:0.78rem; color:#555;">Muestra tu QR en barra para disfrutarla</p>
+            <button onclick="lanzarConfeti()" style="background:#e76f51; color:#fff; border:none; border-radius:20px; padding:4px 12px; font-size:0.75rem; font-weight:700; cursor:pointer;">
+                ✨ Celebrar de nuevo
+            </button>
+        </div>
+        """
+    else:
+        saldo_clase = "saldo-box"
+        aviso_meta = f'<p style="margin:8px 0 0; font-size:0.8rem; color:#777;">Te faltan {faltantes} para tu cortesía</p>'
+
+    banner_google_html = ""
+    if ultima_transaccion and ultima_transaccion["tipo"] == "CANJE":
+        banner_google_html = f"""
+        <div id="caja-resena" style="background:#fef7ed; border:1.5px solid #fbd38d; border-radius:16px; padding:16px; margin:16px 0; position:relative; text-align:center;">
+            <div style="font-size:1.3rem; margin-bottom:4px;">☕ ⭐⭐⭐⭐⭐</div>
+            <h4 style="margin:0 0 6px; color:#744210; font-size:1rem;">¿Disfrutaste tu cortesía?</h4>
+            <p style="margin:0 0 12px; font-size:0.82rem; color:#975a16; line-height:1.3;">
+                Tu opinión nos ayuda muchísimo a seguir compartiendo buen café. ¡Califícanos en Google!
+            </p>
+            <a href="{ENLACE_GOOGLE_RESEÑAS}" target="_blank" rel="noopener noreferrer" 
+               style="display:inline-block; background:#bc6c25; color:#ffffff; text-decoration:none; font-weight:700; font-size:0.85rem; padding:10px 18px; border-radius:10px; box-shadow:0 2px 8px rgba(188,108,37,0.25);">
+                Dejar una opinión en Google
+            </a>
+            <button onclick="document.getElementById('caja-resena').style.display='none'" 
+                    style="position:absolute; top:8px; right:10px; background:none; border:none; color:#a0aec0; font-size:1.1rem; cursor:pointer;">
+                ✕
+            </button>
+        </div>
+        """
 
     html_content = f"""
     <!DOCTYPE html>
@@ -245,7 +285,6 @@ def vista_tarjeta(request: Request, token: str):
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
         <title>Mi Tarjeta Digital | Latte&Go</title>
         
-        <!-- PWA Meta tags con icono real -->
         <link rel="manifest" href="/manifest.json">
         <meta name="theme-color" content="#2b1e16">
         <meta name="apple-mobile-web-app-capable" content="yes">
@@ -255,6 +294,8 @@ def vista_tarjeta(request: Request, token: str):
         <link rel="icon" type="image/png" href="/icon.png">
 
         <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+        <!-- Canvas Confetti CDN -->
+        <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
         <style>
             body {{
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -283,12 +324,21 @@ def vista_tarjeta(request: Request, token: str):
                 border-radius: 16px;
                 padding: 16px;
                 margin: 16px 0;
+                transition: all 0.3s ease;
+            }}
+            .saldo-box.meta-alcanzada {{
+                background: linear-gradient(135deg, #fdf8f0 0%, #faedcd 100%);
+                border: 2px solid #2a9d8f;
+                box-shadow: 0 4px 14px rgba(42, 157, 143, 0.2);
             }}
             .puntos {{
                 font-size: 3rem;
                 font-weight: 800;
                 color: #bc6c25;
                 line-height: 1;
+            }}
+            .meta-alcanzada .puntos {{
+                color: #2a9d8f;
             }}
             .barra-bg {{
                 background: #e9ecef;
@@ -301,6 +351,9 @@ def vista_tarjeta(request: Request, token: str):
                 background: #bc6c25;
                 height: 100%;
                 width: {porcentaje}%;
+            }}
+            .meta-alcanzada .barra-fill {{
+                background: #2a9d8f;
             }}
             #qrcode {{
                 display: flex;
@@ -408,7 +461,7 @@ def vista_tarjeta(request: Request, token: str):
             <h1 style="font-size:1.3rem; margin:0; color:#4a3427;">¡Hola, {cliente_dict['nombre']}! 🐾</h1>
             <p style="margin:4px 0 0; font-size:0.8rem; color:#777;">Muestra tu QR en barra al ordenar</p>
             
-            <div class="saldo-box">
+            <div class="{saldo_clase}">
                 <div class="puntos">{cliente_dict['huellitas_saldo']}</div>
                 <div style="font-size:0.85rem; color:#6b5b50; margin-top:4px;">Huellitas acumuladas</div>
                 <div class="barra-bg"><div class="barra-fill"></div></div>
@@ -416,6 +469,8 @@ def vista_tarjeta(request: Request, token: str):
             </div>
 
             <div id="qrcode"></div>
+
+            {banner_google_html}
 
             <button class="btn-pwa" onclick="abrirGuiaInstalacion()">
                 📲 Guardar tarjeta en mi teléfono
@@ -450,193 +505,11 @@ def vista_tarjeta(request: Request, token: str):
                 colorLight: "#ffffff"
             }});
 
-            let deferredPrompt = null;
-            window.addEventListener('beforeinstallprompt', (e) => {{
-                e.preventDefault();
-                deferredPrompt = e;
-            }});
-
-            function abrirGuiaInstalacion() {{
-                if (deferredPrompt) {{
-                    deferredPrompt.prompt();
-                    deferredPrompt.userChoice.then((choiceResult) => {{
-                        if (choiceResult.outcome === 'accepted') {{
-                            console.log('Cliente instaló la app');
-                        }}
-                        deferredPrompt = null;
-                    }});
-                    return;
-                }}
-
-                const esIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-                const contenedor = document.getElementById("instrucciones-dinamicas");
-
-                if (esIOS) {{
-                    contenedor.innerHTML = `
-                        <div class="step-item">
-                            <div class="step-num">1</div>
-                            <div>Toca el botón <b>Compartir</b> en Safari (el icono de cuadro con flecha hacia arriba ⎋).</div>
-                        </div>
-                        <div class="step-item">
-                            <div class="step-num">2</div>
-                            <div>Baja y selecciona <b>"Agregar a inicio"</b> ➕.</div>
-                        </div>
-                    `;
-                }} else {{
-                    contenedor.innerHTML = `
-                        <div class="step-item">
-                            <div class="step-num">1</div>
-                            <div>Toca los <b>tres puntos (⋮)</b> arriba a la derecha en Chrome.</div>
-                        </div>
-                        <div class="step-item">
-                            <div class="step-num">2</div>
-                            <div>Elige <b>"Instalar aplicación"</b> o <b>"Agregar a la pantalla principal"</b> 📲.</div>
-                        </div>
-                    `;
-                }}
-
-                document.getElementById("modal-guia").style.display = "flex";
-            }}
-
-            function cerrarGuia() {{
-                document.getElementById("modal-guia").style.display = "none";
-            }}
-        </script>
-    </body>
-    </html>
-    """
-    return HTMLResponse(content=html_content)
-
-@app.get("/caja", response_class=HTMLResponse)
-def vista_caja(request: Request):
-    return templates.TemplateResponse(request=request, name="barista.html", context={})
-
-# ----------------- ENDPOINTS DE API -----------------
-
-@app.post("/api/clientes/registro")
-def registrar_cliente(datos: ClienteAlta):
-    conn = get_db()
-    cur = conn.cursor()
-    correo_limpio = datos.correo.lower().strip()
-    try:
-        cur.execute(f"SELECT token_qr FROM clientes WHERE correo = {PARAM}", (correo_limpio,))
-        existente = cur.fetchone()
-        if existente:
-            token = existente["token_qr"]
-            if not token:
-                token = str(uuid.uuid4())
-                cur.execute(f"UPDATE clientes SET token_qr = {PARAM} WHERE correo = {PARAM}", (token, correo_limpio))
-                conn.commit()
-            conn.close()
-            return {"token": token, "mensaje": "¡Bienvenido de vuelta!"}
-
-        fecha_val = str(datos.fecha_nacimiento) if datos.fecha_nacimiento else None
-        nuevo_token = str(uuid.uuid4())
-
-        if DATABASE_URL:
-            cur.execute(
-                """
-                INSERT INTO clientes (token_qr, nombre, correo, fecha_nacimiento, huellitas_saldo) 
-                VALUES (%s, %s, %s, %s, %s) RETURNING id, token_qr
-                """,
-                (nuevo_token, datos.nombre.strip(), correo_limpio, fecha_val, HUELLITAS_BIENVENIDA)
-            )
-            fila = cur.fetchone()
-            cliente_id = fila["id"]
-            token = fila["token_qr"]
-
-            cur.execute(
-                """
-                INSERT INTO transacciones (cliente_id, tipo, cantidad, descripcion) 
-                VALUES (%s, 'ACUMULACION', %s, 'Regalo de bienvenida')
-                """,
-                (cliente_id, HUELLITAS_BIENVENIDA)
-            )
-        else:
-            cur.execute(
-                """
-                INSERT INTO clientes (token_qr, nombre, correo, fecha_nacimiento, huellitas_saldo) 
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (nuevo_token, datos.nombre.strip(), correo_limpio, fecha_val, HUELLITAS_BIENVENIDA)
-            )
-            cliente_id = cur.lastrowid
-            token = nuevo_token
-
-            cur.execute(
-                """
-                INSERT INTO transacciones (cliente_id, tipo, cantidad, descripcion) 
-                VALUES (?, 'ACUMULACION', ?, 'Regalo de bienvenida')
-                """,
-                (cliente_id, HUELLITAS_BIENVENIDA)
-            )
-
-        conn.commit()
-        return {"token": token, "mensaje": "¡Registro exitoso! Disfruta tus primeras 2 huellitas."}
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Error en base de datos: {str(e)}")
-    finally:
-        conn.close()
-
-@app.get("/api/cliente/{identificador}")
-def obtener_cliente(identificador: str):
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute(f"SELECT id, token_qr, nombre, huellitas_saldo FROM clientes WHERE token_qr = {PARAM}", (identificador,))
-    cliente = cur.fetchone()
-    if not cliente and identificador.isdigit():
-        cur.execute(f"SELECT id, token_qr, nombre, huellitas_saldo FROM clientes WHERE id = {PARAM}", (int(identificador),))
-        cliente = cur.fetchone()
-    conn.close()
-    if not cliente:
-        raise HTTPException(status_code=404, detail="Cliente no encontrado")
-    return dict(cliente)
-
-@app.post("/api/transaccion")
-def procesar_transaccion(datos: SolicitudTransaccion):
-    conn = get_db()
-    cur = conn.cursor()
-    
-    cliente = None
-    if datos.token:
-        cur.execute(f"SELECT id, huellitas_saldo FROM clientes WHERE token_qr = {PARAM}", (datos.token,))
-        cliente = cur.fetchone()
-    elif datos.cliente_id:
-        cur.execute(f"SELECT id, huellitas_saldo FROM clientes WHERE id = {PARAM}", (datos.cliente_id,))
-        cliente = cur.fetchone()
-
-    if not cliente:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Cliente no encontrado")
-
-    cliente_id = cliente["id"]
-    saldo = cliente["huellitas_saldo"]
-
-    if datos.tipo_accion in ["VISITA", "BEBIDA", "PAN"]:
-        desc = "Visita"
-        cur.execute(f"UPDATE clientes SET huellitas_saldo = huellitas_saldo + 1 WHERE id = {PARAM}", (cliente_id,))
-        cur.execute(
-            f"INSERT INTO transacciones (cliente_id, tipo, cantidad, descripcion) VALUES ({PARAM}, 'ACUMULACION', 1, {PARAM})",
-            (cliente_id, desc)
-        )
-        conn.commit()
-        conn.close()
-        return {"mensaje": "¡Huellita registrada!", "nuevo_saldo": saldo + 1}
-
-    elif datos.tipo_accion in ["CANJE_BEBIDA", "CANJE_PAN", "CANJE"]:
-        if saldo < HUELLITAS_CANJE:
-            conn.close()
-            raise HTTPException(status_code=400, detail=f"Saldo insuficiente. Tiene {saldo} de 10 huellitas.")
-        desc = "Bebida de cortesía"
-        cur.execute(f"UPDATE clientes SET huellitas_saldo = huellitas_saldo - {PARAM} WHERE id = {PARAM}", (HUELLITAS_CANJE, cliente_id))
-        cur.execute(
-            f"INSERT INTO transacciones (cliente_id, tipo, cantidad, descripcion) VALUES ({PARAM}, 'CANJE', {PARAM}, {PARAM})",
-            (cliente_id, HUELLITAS_CANJE, desc)
-        )
-        conn.commit()
-        conn.close()
-        return {"mensaje": "¡Canje exitoso!", "nuevo_saldo": saldo - HUELLITAS_CANJE}
-
-    conn.close()
-    raise HTTPException(status_code=400, detail="Acción no válida")
+            // Función de confeti festivo con paleta de Latte&Go
+            function lanzarConfeti() {{
+                if (typeof confetti === 'function') {{
+                    confetti({{
+                        particleCount: 60,
+                        spread: 70,
+                        origin: {{ y: 0.6 }},
+                        colors: ['#bc6c25', '#d4a373', '#2a9d8f', '#e76f51', '#2b1e16']
